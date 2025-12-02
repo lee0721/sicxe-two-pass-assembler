@@ -1,0 +1,36 @@
+系統程式作業二Cross Assembler
+資訊三乙10833230李郁含
+
+1. 開發平台:Dev c++  
+※有更改環境:編譯器選項
+(1)呼叫編譯器加入命令:-std=c++11   -Wl,--stack=100000000 
+(2)在連結器命令列加入命令:-static-libgcc
+
+2. 使用開發環境:windows11
+
+3. 所選擇的組合語言( x86, SIC ):SIC
+
+4. 說明你的程式設計(功能，流程，使用的data structure):
+※有做流程圖放在壓縮檔裡面
+sic:
+(1)功能:讀入sic程式碼input檔，並按照順序將一行一行原始程式按照label和instructions翻成object code並記錄下來，最後寫檔進sicoutput檔。
+(2)流程:讀入四個table檔(我有在table2裡新增了EQU LTORG BASE)、sic instruction set的檔案(我有寫兩個table各裝sicxe和sic的instruction set)和一個使用者輸入檔案名的檔案，分別將檔案切token去table一個一個找tokentype和tokenvalue並記錄下來存在struct裡，接著判斷原始程式是否為空的或是註解行，不是的話再進入包裝tokens(每行程式的token group分組)和判斷error，我是一個一個從tokentype來判斷每行的第幾個token是不是table1、是不是table2、是不是table3、是不是table4….，例如:第一個如果是table5的話就存進這行的label設定，並接著判斷是不是index定址模式、literal、pseudo instructions還是單純address或<symbol>，並記錄下來ins、group1、group2(如果有的話)和x=1|0，如果都不是則記錄error。接著判斷是不是第一行(因為如果是第一行就沒有上一個)，取得前一個的行數的location加上那行的label-length(除了BYTE的X之外其餘長度都是3)，接著加完後將他轉成十六進位(string hexlocation)，設定line(這就是包括註解每行加5)，最後設定object code(前面token_packer、tokens有紀錄各種資訊，依照紀錄的x=1|0去找object code 去setcode)再增加行數，不停一行一行的讀直到檔案沒內容。
+跳出迴圈後做pass2，去找每個需要pass2的那行程式(前面有紀錄每一行有沒有需要forwardreference)，有的話就先判斷x=1|0然後去找那個label的address且依x增加在objectcode後面，最後將存在token_packer的內容依照Line、Location、Source code、Object code的順序寫檔進sicoutput。
+
+sicxe:
+(1)功能:讀入sicxe程式碼input檔，並按照順序將一行一行原始程式按照label和instructions翻成object code並記錄下來，最後寫檔進sicxeoutput檔。
+(2)流程:讀入四個table檔(我有在table2裡新增了EQU LTORG BASE)、sicxe instruction set的檔案(我有寫兩個table各裝sicxe和sic的instruction set)和一個使用者輸入檔案名的檔案，分別將檔案切token去table一個一個找tokentype和tokenvalue並記錄下來存在struct裡，接著判斷原始程式是否為空的或是註解行，不是的話再進入包裝tokens(每行程式的token group分組)和判斷error，我是一個一個從tokentype來判斷每行的第幾個token是不是table1、是不是table2、是不是table3、是不是table4….，例如:第一個如果是table5的話就存進這行的label設定，並接著判斷第二個token是不是table1或table2或table4，分門別類判斷(1)table1的話那麼他就是format3接著去sicxe instructions set去找他的format、opformat(後面應該接甚麼)和objectcode並記錄下來，按照opformat確認格式，如果不對就紀錄error；如果對就接著紀錄group1、group2(如果有的話) 、定址模式；(2)table2的話那麼他就是pseudo instructions分別按照他是哪個ins去做他該做的是(例如START設定起始位置、END代表程式到結尾、EQU設定數字為location、BYTE紀錄到group1後面翻轉成十六進位、WORD紀錄到group1後面轉成十六進位、RESB label佔幾 bytes,下一個執行指令從RESB+這個label的bytes開始、RESW這個label佔幾word)(3)如果都不是就是error，接著判斷沒有label的。
+接著判斷是不是第一行(因為如果是第一行就沒有上一個)或此行是不是EQU(EQU的location要記錄address)取得前一個不是EQU的行數的location加上那行的label-length(這是依照objectcode的長度:format4是4、format3是3以此類推…)，接著加完後將他轉成十六進位(string hexlocation)，設定line(這就是包括註解每行加5)，最後設定object code(前面token_packer、tokens有紀錄各種資訊，依照紀錄的opformat和format不同格式去找object code 去setcode)再增加行數，不停一行一行的讀直到檔案沒內容。
+跳出迴圈後先設定base(有的話就紀錄base的address)並設定需要重定位的那行程式碼的objec code，然後做pass2，判斷format3要抓label去修改disp(重定位)，format4要抓label去修改address，最後將存在token_packer的內容依照Line、Location、Source code、Object code的順序寫檔進sicxeoutput。
+
+(3)使用的data structure:都是用struct
+a.紀錄sic instructions set的各種資訊 (instruction、objectcode)
+b. Table(index編號、value內容)7個table
+c. Packed_Token包裝過的 tokens(數量、最長的source code、base跟basenum這個程式是否有base、Tokens token_groups[MAX_TOKEN_GROUP]真正用來用來記錄 tokens groups 的地方)
+d. Tokens一行程式的tokens及這行的各種資訊(數量、指令長度、這行 source 中遇到的error、有沒有需要 forward reference、這行有沒有end、這行是否是註解
+、是否是第一行是否是pseudo..、行程式的原始程式、nixpb、line(做計算的line)、setedline(補完空白的line)、location(做計算的location)、hex_location(location轉成十六進位並用string位址紀錄)、紀錄objectcode(十六進位)、此行format、此行opformat(後面op的形式)、這行程式碼的 Label、這行程式碼的 "指令" 或 "虛擬指令"、 group1、group2、literal、實際紀錄 token 的地方)
+e. Token這行第幾個token(value、tokentype放在哪個table、tokenvalue放在table裡第幾個index)
+f. Literal 紀錄literal的table (location、屬於c |x|word、label、literal)
+
+5. 未完成的功能
+基本上都有完成
