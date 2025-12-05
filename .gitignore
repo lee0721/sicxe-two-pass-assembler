@@ -1,0 +1,14 @@
+# macOS metadata
+.DS_Store
+
+# Build artefacts
+/assembler
+*.o
+*.out
+*.log
+
+# Editor/IDE artefacts
+*.swp
+*.swo
+.vscode/
+.idea/
