@@ -1,92 +1,124 @@
-//系統程式作業二_10833230李郁含 
-#include<iostream>    // cin,cout,endl
-#include<string>      // c_str,length
-#include<string.h>    //strcpy
+#include<iostream>    // cin, cout, endl
+#include<string>      // c_str, length
+#include<string.h>    // strcpy
+#include<sstream>
+#include<cctype>
 #include<stdio.h>    
 #include<stdlib.h>    //atoi()
 #include<cstdlib>     //strtoul,system
 #include <vector>
 #include<fstream>
 #include<typeinfo>
+#include<unordered_map>
 
-#define MAX_TOKENS 30 //估計一行程式最多有幾個 tokens
-#define MAX_TOKEN_GROUP 100 //估計最多幾行 
- 
+#define MAX_TOKENS 30        // Max tokens per source statement
+#define MAX_TOKEN_GROUP 100  // Max number of source statements held
+
 using namespace std;
 using std::string;
 
-typedef char STRING20 [20]; //短字串，最多19個字元
-typedef char STRING200 [200]; //長字串，最多199個字元
+typedef char STRING20 [20];   // Fixed buffer for <=19-char labels
+typedef char STRING200 [200]; // Fixed buffer for <=199-char source lines
+
+string promptFilePath(const string &prompt) {
+    cout << prompt;
+    string path;
+    cin >> ws;
+    getline(cin, path);
+    return path;
+}
+
+bool openInputFile(ifstream &stream, const string &path) {
+    stream.open(path.c_str());
+    if (stream.is_open())
+        return true;
+    cerr << "Error: Unable to open input file '" << path << "'." << endl;
+    return false;
+}
+
+bool openOutputFile(ofstream &stream, const string &path) {
+    stream.open(path.c_str());
+    if (stream.is_open())
+        return true;
+    cerr << "Error: Unable to open output file '" << path << "'." << endl;
+    return false;
+}
+
+enum class TokenType {
+    Unknown = 0,
+    Instruction = 1,
+    Pseudo = 2,
+    Register = 3,
+    Delimiter = 4,
+    Label = 5,
+    Number = 6,
+    Literal = 7
+};
+
+struct Token{
+    string value;    
+    TokenType type = TokenType::Unknown;  // ID of the table that matched this token
+    int tokenvalue = 0; // Index inside that table
+}; // Token
 
 struct Sicxe_Instruction_Set {
 	string instruction;
-	int format = 0; //format1或 format2或format3/4(先設定為3 後面判斷有+就改4
-	int opformat = 0; //後面op的形式  (1) x (沒有的) [1/3/4]
-	                  //              (2) m          [3/4]
-					  //              (3) r1         [2]
-					  //              (4) r1,r2      [2]
-					  //              (5) r1,n       [2]
-					  //              (6) n          [2]
+	int format = 0;   // Instruction format (1/2/3/4, default 3 unless '+' -> 4)
+	int opformat = 0; // Operand pattern
 	string objectcode;
 }; // Sicxe_Instruction_Set
-
-void Sicxe_Instruction_input( Sicxe_Instruction_Set sicxe[59] ) {
-	ifstream newfile; 
-	newfile.open("Sicxe_Instruction_Set.table"); //開啟檔案
-	int num = 0; // 多少個指令 
-	for ( int i = 0 ; i < 236 ; i++) {
-	  newfile >> sicxe[num].instruction; //將一行一行的字串讀檔進struct裡面  指令 
-	  newfile >> sicxe[num].format; //將一行一行的字串讀檔進struct裡面  形式 
-	  newfile >> sicxe[num].opformat; //將一行一行的字串讀檔進struct裡面  op形式 
-	  newfile >> sicxe[num].objectcode; //將一行一行的字串讀檔進struct裡面  code
-	  num++;
-	} //for 
-	newfile.close();//讀檔完後關閉檔案
-}  // Sicxe_Instruction_input
 
 struct Sic_Instruction_Set {
 	string instruction;
 	string objectcode;
 }; // Sic_Instruction_Set
 
+void Sicxe_Instruction_input( Sicxe_Instruction_Set sicxe[59] ) {
+	ifstream newfile; 
+	newfile.open("Sicxe_Instruction_Set.table"); // Load SIC/XE opcode table
+	int num = 0; // Current record index 
+	for ( int i = 0 ; i < 236 ; i++) {
+	  newfile >> sicxe[num].instruction;
+	  newfile >> sicxe[num].format;
+	  newfile >> sicxe[num].opformat;
+	  newfile >> sicxe[num].objectcode;
+	  num++;
+	}
+	newfile.close();
+}  // Sicxe_Instruction_input
+
 void Sic_Instruction_input( Sic_Instruction_Set sic[26] ) {
 	ifstream newfile; 
-	newfile.open("Sic_Instruction_Set.table"); //開啟檔案
-	int num = 0; // 多少個指令 
+	newfile.open("Sic_Instruction_Set.table"); // Load SIC opcode table
+	int num = 0; // Current record index 
 	for ( int i = 0 ; i < 52 ; i++) {
-	  newfile >> sic[num].instruction; //將一行一行的字串讀檔進struct裡面  指令 
-	  newfile >> sic[num].objectcode; //將一行一行的字串讀檔進struct裡面  code
+	  newfile >> sic[num].instruction;
+	  newfile >> sic[num].objectcode;
 	  num++;
-	} //for 
-	newfile.close();//讀檔完後關閉檔案
+	}
+	newfile.close();
 }  // Sic_Instruction_input
 
-void Sicxe_Instruction_print( Sicxe_Instruction_Set sicxe[59] ) {  //test
+void Sicxe_Instruction_print( Sicxe_Instruction_Set sicxe[59] ) {
 	for ( int i = 0 ; i < 59 ; i++) {
-	  cout << sicxe[i].instruction << " "; //將一行一行的字串讀檔進struct裡面  指令 
-	  cout << sicxe[i].format << " "; //將一行一行的字串讀檔進struct裡面  op形式 
-	  cout << sicxe[i].opformat << " "; //將一行一行的字串讀檔進struct裡面  形式 
-	  cout << sicxe[i].objectcode; //將一行一行的字串讀檔進struct裡面  code
+	  cout << sicxe[i].instruction << " "; 
+	  cout << sicxe[i].format << " "; 
+	  cout << sicxe[i].opformat << " "; 
+	  cout << sicxe[i].objectcode;
 	  cout << endl ;
-	} //for 
+	}
 }  // Sicxe_Instruction_print
 
-void Sic_Instruction_print( Sic_Instruction_Set sic[26] ) {  //test
+void Sic_Instruction_print( Sic_Instruction_Set sic[26] ) {
 	for ( int i = 0 ; i < 26 ; i++) {
-	  cout << sic[i].instruction << " "; //將一行一行的字串讀檔進struct裡面  指令 
-	  cout << sic[i].objectcode; //將一行一行的字串讀檔進struct裡面  code
+	  cout << sic[i].instruction << " "; 
+	  cout << sic[i].objectcode;
 	  cout << endl ;
-	} //for 
+	}
 }  // Sic_Instruction_print
 
-struct Token{
-    string value;    
-    int tokentype = 0;  //放在哪個table 
-    int tokenvalue = 0; //放在table裡第幾個index 
-}; // Token
-
 struct Literal{
-	int location = 0; //紀錄位址(十進位的所以後面要改成十六進位) 
+	int location = 0; // Address assigned when literal is emitted
 	string c_x_w ;
     string label;    
     string WORDorBYTE;
@@ -94,50 +126,55 @@ struct Literal{
 }; // Literal
 
 struct Tokens{
-    unsigned amount; //紀錄這行 source 中有實際有幾個 token
-    int label_length = 0; //紀錄這行指令長度 
-    string error;    //紀錄這行 source 中遇到的error 
-    bool forwardreference = false; //有沒有需要 forward reference
-    bool end = false;  //這行有end 
-    bool base = false;  //這行有base
-    bool comment = false; //這行是註解 
+    struct AddressingFlags {
+        bool n = false;
+        bool i = false;
+        bool x = false;
+        bool b = false;
+        bool p = false;
+        bool e = false;
+    };
+
+    unsigned amount;        // Number of tokens parsed from the line
+    int label_length = 0;   // Length of the label, if present
+    string error;           // Error message for this source line
+    bool forwardreference = false; // True if referencing an unresolved label
+    bool end = false; 
+    bool base = false; 
+    bool comment = false; 
     bool EQU = false; 
     bool START = false ;
     bool pseudo = false;
     //--------------------------------------------------
     string c_x_w ;
-    string sourcestatement; //紀錄這行程式的原始程式 
-    int b = 0;   //是否有使用 base register 
-    int p = 0;   //是否有使用 program counter
-    int x = 0;   //是否有使用 index register 
-    int i = 0;   //是否有使用 immediate mode
-	int n = 0;   //是否有使用 indirect mode
+    string sourcestatement; // Original source text of the line
+    AddressingFlags flags;
 	int line = 0;
-	string setedline;  //補完空白的line 
-    int location = 0; //紀錄位址(十進位的所以後面要改成十六進位) 
-    string hex_location; //十六進位位址
-    string objectcode;  //紀錄objectcode(十六進位) 
+	string setedline;  // Line number padded for listings
+    int location = 0; // Location counter for the statement
+    string hex_location; // Location in hex string format
+    string objectcode;  // Object code emitted for this line
     //--------------------------------------------------
-    int format = 0 ; //format1234
-    int opformat = 0; //後面op的形式
-    string label; //這行程式碼的 Label，如果沒有的話就是空字串
-    string ins; //這行程式碼的 "指令" 或 "虛擬指令"，如果沒有的話就是空字串
+    int format = 0 ; // Instruction format (1/2/3/4)
+    int opformat = 0; // Operand format classification
+    string label; // Parsed label text
+    string ins;   // Mnemonic or directive text
     string group1;
     string group2;
     Literal literal;
     //--------------------------------------------------
-    Token tokens[MAX_TOKENS]; //實際紀錄 token 的地方
+    Token tokens[MAX_TOKENS]; // Collected tokens for this line
 };  // Tokens
 
-struct Packed_Token{ //注意這個名稱 -> "包裝過的 tokens"
-    unsigned amount; //實際上 Tokens Group 的數量，沒有的話就是 0
-    int longestnum = 0; //紀錄最長的source 
+struct Packed_Token{
+    unsigned amount; // Count of tokenized statements
+    int longestnum = 0; // Length of the longest source line
     bool end = false;
     bool base = false;
     string base_label;
     string base_hexlocation;
     int basenum = 0;
-    Tokens token_groups[MAX_TOKEN_GROUP]; //真正用來用來記錄 tokens groups 的地方
+    Tokens token_groups[MAX_TOKEN_GROUP]; // Storage for each statement
 }; // Packed_Token
 
 struct Table{
@@ -145,7 +182,127 @@ struct Table{
     string value;
 }; //Table
 
-void removespace( string &str ){ //移除空白 //test
+class SymbolTable {
+public:
+    int insertOrGet(const string &token) {
+        auto [it, inserted] = entries.emplace(token, nextIndex);
+        if (inserted) ++nextIndex;
+        return it->second;
+    }
+
+    bool get(const string &token, int &index) const {
+        auto it = entries.find(token);
+        if (it == entries.end()) return false;
+        index = it->second;
+        return true;
+    }
+
+private:
+    unordered_map<string, int> entries;
+    int nextIndex = 1;
+};
+
+void loadOpcodeTables( Table table1[59], Table table2[9], Table table3[9], Table table4[13] ) {
+	ifstream newfile; 
+	const string basePath = "SICTABLE/";
+	auto openTable = [&](const string &filename) -> bool {
+		newfile.open((basePath + filename).c_str());
+		if (!newfile.is_open()) {
+			cerr << "Error: Unable to open " << filename << " under " << basePath << endl;
+			return false;
+		}
+		return true;
+	};
+
+	if ( !openTable("Table1.table") )
+		return;
+	for ( int i = 1 ; i < 60 ; i++) {
+	  newfile >> table1[i-1].value;
+	  table1[i-1].index = i;
+	}
+	newfile.close();
+	
+	if ( !openTable("Table2.table") )
+		return;
+	for ( int i = 1 ; i < 10; i++) {
+	  newfile >> table2[i-1].value;
+	  table2[i-1].index = i;
+	}
+	newfile.close();
+	
+	if ( !openTable("Table3.table") )
+		return;
+	for ( int i = 1 ; i < 10; i++) {
+	  newfile >> table3[i-1].value;
+	  table3[i-1].index = i;
+	}
+	newfile.close();
+	
+	if ( !openTable("Table4.table") )
+		return;
+	for ( int i = 1 ; i < 14; i++) {
+	  newfile >> table4[i-1].value;
+	  table4[i-1].index = i;
+	}
+	newfile.close();
+}
+
+bool lookupToken( string token, Table table1[59], Table table2[9], Table table3[9], Table table4[13], 
+          SymbolTable &table5, SymbolTable &table6, SymbolTable &table7, TokenType &tokentype, int &tokenvalue ){
+    string upper = token;
+    string lower = token;
+    for (auto &c : upper) c = toupper(static_cast<unsigned char>(c));
+    for (auto &c : lower) c = tolower(static_cast<unsigned char>(c));
+    for ( int i = 0 ; i < 59; i++) {
+	  if ( lower == table1[i].value ) {
+	  	tokentype = TokenType::Instruction;
+	  	tokenvalue = table1[i].index;
+	  	return true;
+	  }
+	}
+	
+	for ( int i = 0 ; i < 9; i++) {
+	  if ( upper == table2[i].value ) {
+	  	tokentype = TokenType::Pseudo;
+	  	tokenvalue = table2[i].index;
+	  	return true;
+	  }
+	}
+
+    for ( int i = 0 ; i < 9; i++) {
+	  if ( upper == table3[i].value ) {
+	  	tokentype = TokenType::Register;
+	  	tokenvalue = table3[i].index;
+	  	return true;
+	  }
+	}
+
+	for ( int i = 0 ; i < 13; i++) {
+	  if ( token == table4[i].value ) {
+	  	tokentype = TokenType::Delimiter;
+	  	tokenvalue = table4[i].index;
+	  	return true;
+	  }
+	}
+	if ( table5.get(upper, tokenvalue) ) {
+	  	tokentype = TokenType::Label;
+	  	return true;
+	}
+	if ( table6.get(upper, tokenvalue) ) {
+	  	tokentype = TokenType::Number;
+	  	return true;
+	}
+	if ( table7.get(token, tokenvalue) ) {
+	  	tokentype = TokenType::Literal;
+	  	return true;
+	}
+	return false;
+}
+
+void instable( string token, SymbolTable &table, TokenType &, int &tokenvalue){ 
+  tokenvalue = table.insertOrGet(token);
+}
+void removespace( string &str ){ // Remove every space
   int index = 0;
     if( !str.empty()) {
       while( (index = str.find(' ',index)) != string::npos)
@@ -153,109 +310,156 @@ void removespace( string &str ){ //移除空白 //test
     } // if
 } // removespace
 
-void tableinput( Table table1[59], Table table2[9], Table table3[9], Table table4[13] ) {  //get the table1.2.3.4 
-	ifstream newfile; 
-	newfile.open("Table1.table"); //開啟檔案
-	for ( int i = 1 ; i < 60 ; i++) {
-	  newfile >> table1[i-1].value; //將一行一行的字串讀檔進struct裡面 
-	  table1[i-1].index = i;
-	} //for 
-	newfile.close();//讀檔完後關閉檔案
-	
-	newfile.open("Table2.table"); //開啟檔案
-	for ( int i = 1 ; i < 10; i++) {
-	  newfile >> table2[i-1].value; //將一行一行的字串讀檔進struct裡面 
-	  table2[i-1].index = i;
-	} //for 
-	newfile.close();//讀檔完後關閉檔案
-	
-	newfile.open("Table3.table"); //開啟檔案
-	for ( int i = 1 ; i < 10; i++) {
-	  newfile >> table3[i-1].value; //將一行一行的字串讀檔進struct裡面 
-	  table3[i-1].index = i;
-	} //for 
-	newfile.close();//讀檔完後關閉檔案
-	
-	newfile.open("Table4.table"); //開啟檔案
-	for ( int i = 1 ; i < 14; i++) {
-	  newfile >> table4[i-1].value; //將一行一行的字串讀檔進struct裡面 
-	  table4[i-1].index = i;
-	} //for 
-	newfile.close();//讀檔完後關閉檔案
-} // tableinput
 
-string to_upper( string token ) { //全大寫 
+string to_upper( string token ) { // Convert to uppercase
 	for ( int a = 0; a < token.length() ; a++ ) {
-        if (islower(token[a]))                 // 若為小寫字元
+        if (islower(token[a]))
             token[a] = toupper(token[a]); 
     } // for 
     return token;
 } // to_upper
 
-string to_lower( string token ) { //全小寫 
+string to_lower( string token ) { // Convert to lowercase
 	for ( int a = 0; a < token.length() ; a++ ) {
-        if (isupper(token[a]))                 // 若為大寫字元
+        if (isupper(token[a]))
             token[a] = tolower(token[a]); 
     } // for 
     return token;
 } // to_lower
 
+int currentLocationCounter(const Packed_Token &token_packer) {
+    int temp = token_packer.amount - 1;
+    while ( temp >= 0 && token_packer.token_groups[temp].EQU )
+        temp--;
+    if ( temp >= 0 )
+        return token_packer.token_groups[temp].location + token_packer.token_groups[temp].label_length;
+    return 0;
+}
+
+int findLabelLocation(const Packed_Token &token_packer, const string &label) {
+    string target = to_upper(label);
+    for ( int i = token_packer.amount - 1 ; i >= 0 ; --i ) {
+        if ( !token_packer.token_groups[i].label.empty() ) {
+            string existing = to_upper(token_packer.token_groups[i].label);
+            if ( existing == target )
+                return token_packer.token_groups[i].location;
+        }
+    }
+    return -1;
+}
+
+bool resolveEquTerm(const Packed_Token &token_packer, const Token &tok, int &value, string &errorMsg) {
+    if ( tok.type == TokenType::Number ) {
+        value = atoi(tok.value.c_str());
+        return true;
+    }
+    if ( tok.type == TokenType::Delimiter && tok.value == "*" ) {
+        value = currentLocationCounter(token_packer);
+        return true;
+    }
+    int resolved = findLabelLocation(token_packer, tok.value);
+    if ( resolved >= 0 ) {
+        value = resolved;
+        return true;
+    }
+    errorMsg = "Syntax Error! : Undefined symbol in EQU.";
+    return false;
+}
+
+bool evaluateEquExpression(const Packed_Token &token_packer, const Tokens &toks, int operandIndex, int &result, string &errorMsg) {
+    if ( operandIndex >= toks.amount )
+        return false;
+    if ( !resolveEquTerm(token_packer, toks.tokens[operandIndex], result, errorMsg) )
+        return false;
+    int opIndex = operandIndex + 1;
+    if ( opIndex >= toks.amount )
+        return true;
+    const Token &opToken = toks.tokens[opIndex];
+    if ( opToken.type != TokenType::Delimiter )
+        return true;
+    string op = opToken.value;
+    if ( op != "+" && op != "-" && op != "*" && op != "/" )
+        return true;
+    int rhsIndex = opIndex + 1;
+    if ( rhsIndex >= toks.amount ) {
+        errorMsg = "Syntax Error! : EQU missing right operand.";
+        return false;
+    }
+    int rhs = 0;
+    if ( !resolveEquTerm(token_packer, toks.tokens[rhsIndex], rhs, errorMsg) )
+        return false;
+    if ( op == "+" )
+        result += rhs;
+    else if ( op == "-" )
+        result -= rhs;
+    else if ( op == "*" )
+        result *= rhs;
+    else if ( op == "/" ) {
+        if ( rhs == 0 ) {
+            errorMsg = "Syntax Error! : Division by zero in EQU.";
+            return false;
+        }
+        result /= rhs;
+    }
+    return true;
+}
+
+bool parseHexNumber(const string &token, int &value) {
+    char *endptr = nullptr;
+    long parsed = strtol(token.c_str(), &endptr, 16);
+    if ( endptr == token.c_str() || (endptr && *endptr != '\0') )
+        return false;
+    value = static_cast<int>(parsed);
+    return true;
+}
+
 bool find( string token, Table table1[59], Table table2[9], Table table3[9], Table table4[13], 
-          Table table5[100], Table table6[100], Table table7[100], int &tokentype, int &tokenvalue ){
+          SymbolTable &symbolTable, SymbolTable &numberTable, SymbolTable &literalTable, TokenType &tokentype, int &tokenvalue ){
     string upper = to_upper(token); 
 	string lower = to_lower(token);     	
-    for ( int i = 0 ; i < 59; i++) { // 去table1找此token
+    for ( int i = 0 ; i < 59; i++) { // search instruction table
 	  if ( lower == table1[i].value ) {
-	  	tokentype = 1;
+	  	tokentype = TokenType::Instruction;
 	  	tokenvalue = table1[i].index;
 	  	return true;
 	  } // if
 	} //for 
 	
-	for ( int i = 0 ; i < 9; i++) { // 去table2找此token
+	for ( int i = 0 ; i < 9; i++) { // search pseudo-op table
 	  if ( upper == table2[i].value ) {
-	  	tokentype = 2;
+	  	tokentype = TokenType::Pseudo;
 	  	tokenvalue = table2[i].index;
 	  	return true;
 	  } // if
 	} //for 
 
-    for ( int i = 0 ; i < 9; i++) { // 去table3找此token
+    for ( int i = 0 ; i < 9; i++) { // search register table
 	  if ( upper == table3[i].value ) {
-	  	tokentype = 3;
+	  	tokentype = TokenType::Register;
 	  	tokenvalue = table3[i].index;
 	  	return true;
 	  } // if
 	} //for 
 
-	for ( int i = 0 ; i < 13; i++) { // 去table4找此token
+	for ( int i = 0 ; i < 13; i++) { // search delimiter table
 	  if ( token == table4[i].value ) {
-	  	tokentype = 4;
+	  	tokentype = TokenType::Delimiter;
 	  	tokenvalue = table4[i].index;
 	  	return true;
 	  } // if
 	} //for 
-	for ( int i = 0 ; i < 100; i++) { // 去table5找此token
-	  if ( upper == table5[i].value ) {
-	  	tokentype = 5;
-	  	tokenvalue = table5[i].index;
+	if ( symbolTable.get(upper, tokenvalue) ) {
+	  	tokentype = TokenType::Label;
 	  	return true;
-	  } // if
-	} //for 
-	for ( int i = 0 ; i < 100; i++) { // 去table6找此token
-	  if ( upper == table6[i].value ) {
-	  	tokentype = 6;
-	  	tokenvalue = table6[i].index;
+	}
+	if ( numberTable.get(upper, tokenvalue) ) {
+	  	tokentype = TokenType::Number;
 	  	return true;
-	  } // if
-	} //for 
-	for ( int i = 0 ; i < 100; i++) { // 去table7找此token
-	  if ( token == table7[i].value ) {
-	  	tokentype = 7;
-	  	tokenvalue = table7[i].index;
+	}
+	if ( literalTable.get(token, tokenvalue) ) {
+	  	tokentype = TokenType::Literal;
 	  	return true;
-	  } // if
-	} //for 
+	}
 	return false;
 } // find
 
@@ -286,6 +490,14 @@ bool isLetter( string islet ){ // check whether the character is a number
     return false;
 } // isLetter
 
+bool isBlankLine(const string &line) { // true when a line contains only whitespace
+    for ( char c : line ) {
+        if ( !isspace(static_cast<unsigned char>(c)) )
+            return false;
+    }
+    return true;
+}
+
 bool isOp( char isop ){ // check whether the character is table4
      if ( ( isop == ',' ) || ( isop == '+' ) || ( isop == '-' ) || ( isop == '*' ) 
 	           || ( isop == '/' ) || ( isop == ':' ) || ( isop == ';' ) || ( isop == '?' ) 
@@ -296,28 +508,7 @@ bool isOp( char isop ){ // check whether the character is table4
 } //isOp
 
 
-void instable( string token, Table table[100], int &tokentype, int &tokenvalue){ //
-  bool alreadyhave = false;
-  int a = 0;
-  for ( a = 0 ; a < 100 ; a++)  //先找找看自己的table也許有 
-    if ( token == table[a].value )
-      alreadyhave = true;
-  if ( alreadyhave )
-  	tokenvalue = a;
-  else {
-  	int num = 0; //裝此token的ascii碼
-    for ( int i = 0 ; i < token.length(); i++) 
-   	  num = num + int(token[i]);
-    num = num % 100;
-    if ( !table[num].value.empty() )
-      num++;
-    table[num].value = token;
-    table[num].index = num;
-    tokenvalue = num;
-  } // else
-} // instable
-
-void removewhitespace( string &str ){ //移除空白/tab/換行 
+void removewhitespace( string &str ){ // 
   if ( str[str.length()-1] == ' ' )  {
   	int index = 0;
     if( !str.empty()) {
@@ -341,7 +532,7 @@ void removewhitespace( string &str ){ //移除空白/tab/換行
   } // else if
 } // removewhitespace
 
-bool onespace ( string token ) { //是否只是一個空白
+bool onespace ( string token ) { // 
   bool check = false;
   if ( token.length() == 1 ) 
     if ( token[0] == ' ' )
@@ -351,40 +542,166 @@ bool onespace ( string token ) { //是否只是一個空白
   return false;
 } // onespace
 
-void ins_Tokens( Token &tok, string token, int type, int value ){
+vector<Token> tokenizeLine(
+    const string &source,
+    Table table1[59], Table table2[9], Table table3[9], Table table4[13],
+    SymbolTable &symbolTable, SymbolTable &numberTable, SymbolTable &literalTable,
+    bool &isComment, string &tokenError
+) {
+    vector<Token> tokens;
+    string token;
+    int is_string = 0;
+    int is_integer = 0;
+    TokenType tokentype = TokenType::Unknown;
+    int tokenvalue = 0;
+    bool pendingStringLiteral = false;
+    bool pendingHexLiteral = false;
+    tokenError.clear();
+
+    auto emitToken = [&](const string &tok, TokenType type, int value) {
+        tokens.push_back({tok, type, value});
+    };
+
+    for ( int a = 0; a < source.length() ; a++ ) { 
+        if ( source[a] == '.' ) { 
+            isComment = true;
+            break;
+        } 
+        token.append(1, source[a]);
+        if ( is_string != 1 && is_integer != 1 ) {
+            while ( !iswhitespce( source[a] ) && !isOp( source[a] ) && a+1 < source.length() ){
+                a++;
+                token.append(1, source[a]);
+                int end = a+1;
+                if ( end >= source.length() )
+                    break;
+            }
+        }
+        else if ( is_string == 1 || is_integer == 1 ) {
+            while ( a+1 < source.length() && int(source[a+1]) != 39 ){
+                a++;
+                token.append(1, source[a]);
+            }
+        }
+        
+        if ( a > 0 && int(source[a]) == 39 && (int(source[a-1]) == 99 || int(source[a-1]) == 67) ) {
+            token.erase(0,1);
+            is_string ++;
+            pendingStringLiteral = true;
+        }
+        if ( a > 0 && int(source[a]) == 39 && (int(source[a-1]) == 120 || int(source[a-1]) == 88) ) {
+            token.erase(0,1);
+            is_integer ++;
+            pendingHexLiteral = true;
+        }
+        
+        if ( iswhitespce( source[a] ) )
+           removewhitespace( token );
+        
+        if ( isOp( source[a] ) && is_string != 1 && is_integer != 1 && token.length() != 1 ) {
+            token.erase(token.length()-1, 1);
+            if ( lookupToken( token, table1, table2, table3, table4, symbolTable, numberTable, literalTable, tokentype, tokenvalue ) ) {
+                emitToken(token, tokentype, tokenvalue);
+            }
+            else {
+                string upper = to_upper(token); 
+                if ( isNumber( upper ) ) { 
+                    tokentype = TokenType::Number;
+                    instable( upper, numberTable, tokentype, tokenvalue);  
+                }
+                else { 
+                    tokentype = TokenType::Label;
+                    instable( upper, symbolTable, tokentype, tokenvalue);
+                }
+                emitToken(token, tokentype, tokenvalue);
+            }
+            a--;
+        }
+        else if ( isOp( source[a] ) && token.length() == 1 ) { 
+            if ( lookupToken( token, table1, table2, table3, table4, symbolTable, numberTable, literalTable, tokentype, tokenvalue ) ) {
+                emitToken(token, tokentype, tokenvalue);
+            }
+        }
+        else if ( is_string == 1 && !isOp( source[a] )  ) {
+            tokentype = TokenType::Literal;
+            instable( token, literalTable, tokentype, tokenvalue);
+            emitToken(token, tokentype, tokenvalue);
+            pendingStringLiteral = false;
+            is_string ++;
+        }
+        else if ( is_integer == 1 && !isOp( source[a] )  ) {
+            string upper = to_upper(token); 
+            tokentype = TokenType::Number;
+            instable( upper, numberTable, tokentype, tokenvalue);
+            emitToken(token, tokentype, tokenvalue); 
+            pendingHexLiteral = false;
+            is_integer ++;
+        }
+        else if ( !onespace( token ) && !token.empty() ){ 
+            if ( lookupToken( token, table1, table2, table3, table4, symbolTable, numberTable, literalTable, tokentype, tokenvalue ) ) {
+                emitToken(token, tokentype, tokenvalue);
+            }
+            else {
+                if ( is_integer == 1 ) {
+                    tokentype = TokenType::Literal;
+                    instable( token, literalTable, tokentype, tokenvalue);
+     	        }
+                else if ( isNumber( token ) ) {
+                    string upper = to_upper(token); 
+                    tokentype = TokenType::Number;
+                    instable( upper, numberTable, tokentype, tokenvalue); 
+                }
+                else {
+                    string upper = to_upper(token); 
+                    tokentype = TokenType::Label;
+                    instable( upper, symbolTable, tokentype, tokenvalue); 
+                }
+                emitToken(token, tokentype, tokenvalue);
+            }
+        } 
+        token.clear();
+      }
+    if ( pendingStringLiteral )
+        tokenError = "Syntax Error! : Missing closing quote in character literal.";
+    else if ( pendingHexLiteral )
+        tokenError = "Syntax Error! : Missing closing quote in hexadecimal literal.";
+    return tokens;
+}
+
+void ins_Tokens( Token &tok, string token, TokenType type, int value ){
   tok.value = token;
-  tok.tokentype = type;
+  tok.type = type;
   tok.tokenvalue = value;
 } // ins_Tokens
 
-void ins_packer( Tokens &toks, string token, int tokentype, int tokenvalue ){
+void ins_packer( Tokens &toks, string token, TokenType tokentype, int tokenvalue ){
   ins_Tokens(toks.tokens[toks.amount], token, tokentype, tokenvalue);
-  //cout << toks.tokens[toks.amount].value << endl ; // test
-  //cout << toks.tokens[toks.amount].tokentype << endl ; // test
-  //cout << toks.tokens[toks.amount].tokenvalue << endl ; // test
+  //cout << toks.tokens[toks.amount].value << endl ; // 
+  //cout << toks.tokens[toks.amount].tokentype << endl ; // 
+  //cout << toks.tokens[toks.amount].tokenvalue << endl ; // 
   toks.amount++;
 } // ins_packer
 
-string getTokens( Token tok ) { //TEST 
-	string outputdemo("(,)");  //先寫一個字串demo
-	outputdemo.insert(1, std::to_string(tok.tokentype)); //將tokentype插入outputdemo 
-	outputdemo.insert(outputdemo.length()-1, std::to_string(tok.tokenvalue)); //將tokenvalue插入outputdemo
-	outputdemo.insert(0, tok.value); //將tokenvalue插入outputdemo
+string getTokens( Token tok ) { // helper for debugging token stream
+	string outputdemo("(,)");
+	outputdemo.insert(1, std::to_string(static_cast<int>(tok.type)));
+	outputdemo.insert(outputdemo.length()-1, std::to_string(tok.tokenvalue));
+	outputdemo.insert(0, tok.value);
 	return outputdemo;
 } // getTokens
 
-string getpacker( Tokens toks ) { //TEST
+string getpacker( Tokens toks ) { //
 	string outputdemo;
 	for ( int b = 0 ; b < toks.amount; b++) {
-		//cout << getTokens( toks.tokens[b]) << endl ; // test
+		//cout << getTokens( toks.tokens[b]) << endl ; // 
 		string token = getTokens( toks.tokens[b]) ; 
-		outputdemo.insert(outputdemo.length(), token); //將tokenvalue插入outputdemo
-		outputdemo.insert(outputdemo.length(), " "); //將tokenvalue插入outputdemo
+		outputdemo.insert(outputdemo.length(), token); // 
+		outputdemo.insert(outputdemo.length(), " "); // 
 	} // for
 	return outputdemo;
 } // getpacker
 
-void DecToHexa(int n, string &hex){ // 將十進位轉十六進位 de_to_hex 
+void DecToHexa(int n, string &hex){ // 
     // char array to store hexadecimal number
     char hexaDeciNum[100];
  
@@ -451,7 +768,7 @@ void negativeDecToHexa( int disp, string &hexdisp ){
 	} // for
 } // negativeDecToHexa
 
-void BinToHexa( string &xbpe ){  //將二進位轉十六進位bin_to_hex
+void BinToHexa( string &xbpe ){  // 
   if ( xbpe == "0000" )
     xbpe = "0";
   else if ( xbpe == "0001" )
@@ -486,7 +803,7 @@ void BinToHexa( string &xbpe ){  //將二進位轉十六進位bin_to_hex
     xbpe = "F";
 } // BinToHexa
 
-void HexaToBin( string &t ){  //將二進位轉十六進位bin_to_hex
+void HexaToBin( string &t ){  // 
   if ( t == "0" )
     t = "0000";
   else if ( t == "1" )
@@ -578,9 +895,9 @@ void sicxe_gettokenvalue( Tokens toks, int &r1, string token ){
 } // sicxe_gettokenvalue
 
 void sicxe_set_xbpe( Tokens &toks ) {
-	string x = std::to_string(toks.x);
-	string b = std::to_string(toks.b);
-	string p = std::to_string(toks.p);
+	string x = toks.flags.x ? "1" : "0";
+	string b = toks.flags.b ? "1" : "0";
+	string p = toks.flags.p ? "1" : "0";
 	string e;
 	if ( toks.format == 3 )
 	  e = "0";
@@ -589,7 +906,7 @@ void sicxe_set_xbpe( Tokens &toks ) {
 	x.insert(x.length(),b);
 	x.insert(x.length(),p);
 	x.insert(x.length(),e);
-	BinToHexa( x );  //二進位轉十六進位 
+	BinToHexa( x );  // 
 	toks.objectcode.insert(toks.objectcode.length(),x);
 } //sicxe_set_xbpe
 
@@ -597,7 +914,8 @@ void sicxe_set_disp( Packed_Token token_packer, Tokens toks, string &hexdisp ){
   int disp = 0;
   int base_location = 0;
   HexToDe( hexdisp, base_location );
-  if ( !toks.forwardreference && !token_packer.base_hexlocation.empty() && token_packer.end ) { //base
+  if ( !toks.forwardreference && !token_packer.base_hexlocation.empty() && token_packer.end ) {
+     // Base-relative addressing: subtract the BASE register location.
   	 for ( int i = 0; i < token_packer.amount ; i++ ) 
     	if ( toks.group1 == token_packer.token_groups[i].label )
     	  disp = token_packer.token_groups[i].location - base_location; 
@@ -606,19 +924,21 @@ void sicxe_set_disp( Packed_Token token_packer, Tokens toks, string &hexdisp ){
        DecToHexa(disp, hexdisp);
      else
        negativeDecToHexa( disp, hexdisp );
-  } // 
-  else if ( !toks.forwardreference ) { //會是負的 
+  } 
+  else if ( !toks.forwardreference ) { 
+     // PC-relative addressing with a known target: displacement = target - (PC + instr length).
      for ( int i = 0; i < token_packer.amount ; i++ ) 
     	if ( toks.group1 == token_packer.token_groups[i].label )
     	  disp = token_packer.token_groups[i].location - ( toks.location + toks.label_length ); 
      negativeDecToHexa( disp, hexdisp );
-  } // else if
-  else { //會是正的 
+  } 
+  else { 
+    // Forward reference: still PC-relative but we leave the displacement positive to be patched.
     for ( int i = 0; i < token_packer.amount ; i++ ) 
     	if ( toks.group1 == token_packer.token_groups[i].label )
     	  disp = token_packer.token_groups[i].location - ( toks.location + toks.label_length ); 
 	DecToHexa(disp, hexdisp);
-  } // else
+  }
 } //  sicxe_set_disp
 
 void sicxe_set_address( Packed_Token token_packer, Tokens toks, string &address ){
@@ -627,9 +947,9 @@ void sicxe_set_address( Packed_Token token_packer, Tokens toks, string &address 
     	address = token_packer.token_groups[i].hex_location; 
 } //  sicxe_set_address
 
-        //(1)	前面如果找得到(代表目的-來源(下一個)會是負的)且沒有base       ->設定p=1
-		//(2)	前面如果找得到(代表目的-來源(下一個)會是負的)但有base         ->設定b=1
-		//(3)	前面如果找不到(代表目的-來源(下一個)會是正的)不管有沒有base   ->設定p=1
+// Emit object code according to the decoded format/opcode/operands.
+// Format 2 simply packs register numbers, while formats 3/4 must consider
+// n/i/x/b/p/e bits plus PC/base relative displacements.
 
 void sicxe_setcode( Packed_Token token_packer, Tokens &toks ) {
 	int r1 = 0;
@@ -660,7 +980,7 @@ void sicxe_setcode( Packed_Token token_packer, Tokens &toks ) {
 	} // if
 	else if ( toks.format == 3 ) {
 		if ( toks.opformat == 2 ) {
-		  if ( toks.n == 1 && toks.i == 1 ) { //  n=1i=1
+		  if ( toks.flags.n && toks.flags.i ) { // literal/immediate operand
 		    if ( isNumber( toks.group1 ) ) {
 		      string temp;
 		      temp.append(1,toks.objectcode[1]);
@@ -709,64 +1029,64 @@ void sicxe_setcode( Packed_Token token_packer, Tokens &toks ) {
 		  	    toks.objectcode.insert(toks.objectcode.length(),toks.group1);
 			  } // else if
 			} // if	   
-			else {  
+			else {  // symbolic target requires displacement calculation
 		    string temp;
 		    temp.append(1,toks.objectcode[1]);
-		  	if ( temp == "0" ) { // 0000 0 -> 0011 3
+		  	if ( temp == "0" ) { // convert to n=1,i=1
 		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
 		  	  toks.objectcode.insert(toks.objectcode.length(),"3");
 		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.p == 1 && toks.forwardreference ) //(3)	前面如果找不到(代表目的-來源(下一個)會是正的)不管有沒有base  ->p=1 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  //如果需要 forwardreference後面disp就先設定000
-			  else if ( toks.p == 1 && !toks.forwardreference ) { //(1)	前面如果找得到(代表目的-來源(下一個)會是負的)且沒有base ->p=1 
-		  	    sicxe_set_disp(token_packer, toks, disp);   //如果不需要 forwardreference後面disp就直接設定 #Immediate Addressing 
+		  	  if ( toks.flags.p && toks.forwardreference ) // unresolved PC-relative target
+		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder disp
+			  else if ( toks.flags.p && !toks.forwardreference ) { // resolved target
+		  	    sicxe_set_disp(token_packer, toks, disp);   // compute displacement
 				toks.objectcode.insert(toks.objectcode.length(),"F");
 				toks.objectcode.insert(toks.objectcode.length(),disp);
 		      } // else if
-		  	  else if ( toks.b == 1 ) //(2)	前面如果找得到(代表目的-來源(下一個)會是負的)但有base    ->b=1 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  //base可能需要 forwardreference後面disp就先設定000
+		  	  else if ( toks.flags.b ) // base-relative fallback
+		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
 			} // if
 			else if ( temp == "4" ) { // 0100 4 -> 0111 7
 		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
 		  	  toks.objectcode.insert(toks.objectcode.length(),"7");
 		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.p == 1 && toks.forwardreference ) //(3)	前面如果找不到(代表目的-來源(下一個)會是正的)不管有沒有base  ->p=1 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  //如果需要 forwardreference後面disp就先設定000
-			  else if ( toks.p == 1 && !toks.forwardreference ) { //(1)	前面如果找得到(代表目的-來源(下一個)會是負的)且沒有base ->p=1 
-		  	    sicxe_set_disp(token_packer, toks, disp);   //如果不需要 forwardreference後面disp就直接設定 #Immediate Addressing  
+		  	  if ( toks.flags.p && toks.forwardreference ) // unresolved PC-relative target
+		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
+			  else if ( toks.flags.p && !toks.forwardreference ) { // resolved target
+		  	    sicxe_set_disp(token_packer, toks, disp);   
 		  	    toks.objectcode.insert(toks.objectcode.length(),"F");
 				toks.objectcode.insert(toks.objectcode.length(),disp);
 		      } // else if
-		  	  else if ( toks.b == 1 ) //(2)	前面如果找得到(代表目的-來源(下一個)會是負的)但有base    ->b=1 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  //base可能需要 forwardreference後面disp就先設定000
+		  	  else if ( toks.flags.b ) // base-relative fallback
+		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
 			} // else if
 			else if ( temp == "8" ) { // 1000 8 -> 1011 B
 		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
 		  	  toks.objectcode.insert(toks.objectcode.length(),"B");
 		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.p == 1 && toks.forwardreference ) //(3)	前面如果找不到(代表目的-來源(下一個)會是正的)不管有沒有base  ->p=1 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  //如果需要 forwardreference後面disp就先設定000
-			  else if ( toks.p == 1 && !toks.forwardreference ) { //(1)	前面如果找得到(代表目的-來源(下一個)會是負的)且沒有base ->p=1 
-		  	    sicxe_set_disp(token_packer, toks, disp);   //如果不需要 forwardreference後面disp就直接設定 #Immediate Addressing  
+		  	  if ( toks.flags.p && toks.forwardreference ) // unresolved PC-relative target
+		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
+			  else if ( toks.flags.p && !toks.forwardreference ) { // resolved target
+		  	    sicxe_set_disp(token_packer, toks, disp);   
                 toks.objectcode.insert(toks.objectcode.length(),"F");
 				toks.objectcode.insert(toks.objectcode.length(),disp);
 		      } // else if
-		  	  else if ( toks.b == 1 ) //(2)	前面如果找得到(代表目的-來源(下一個)會是負的)但有base    ->b=1 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  //base可能需要 forwardreference後面disp就先設定000
+		  	  else if ( toks.flags.b ) // base-relative fallback
+		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
 			} // else if
 			else if ( temp == "C" ) { // 1100 C -> 1111 F
 		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
 		  	  toks.objectcode.insert(toks.objectcode.length(),"F");
 		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.p == 1 && toks.forwardreference ) //(3)	前面如果找不到(代表目的-來源(下一個)會是正的)不管有沒有base  ->p=1 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  //如果需要 forwardreference後面disp就先設定000
-			  else if ( toks.p == 1 && !toks.forwardreference ) { //(1)	前面如果找得到(代表目的-來源(下一個)會是負的)且沒有base ->p=1 
-		  	    sicxe_set_disp(token_packer, toks, disp);   //如果不需要 forwardreference後面disp就直接設定 #Immediate Addressing  
+		  	  if ( toks.flags.p && toks.forwardreference ) // unresolved PC-relative target
+		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
+			  else if ( toks.flags.p && !toks.forwardreference ) { // resolved target
+		  	    sicxe_set_disp(token_packer, toks, disp);   
                 toks.objectcode.insert(toks.objectcode.length(),"F");
 				toks.objectcode.insert(toks.objectcode.length(),disp); 
 		      } // else if
-		  	  else if ( toks.b == 1 ) //(2)	前面如果找得到(代表目的-來源(下一個)會是負的)但有base    ->b=1 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  //base可能需要 forwardreference後面disp就先設定000
+		  	  else if ( toks.flags.b ) // base-relative fallback
+		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
 			} // else if // 1100 C -> 1111 F
 		} // else
 		  } // else if
@@ -774,16 +1094,16 @@ void sicxe_setcode( Packed_Token token_packer, Tokens &toks ) {
 	} // else if
 	else if ( toks.format == 4 ) {
 		if ( toks.opformat == 2 ) {
-		  if ( toks.n == 1 && toks.i == 1 ) { //  n=1i=1
+		  if ( toks.flags.n && toks.flags.i ) { //  n=1i=1
 		    string temp;
 		    temp.append(1,toks.objectcode[1]);
 		  	if ( temp == "0" ) { // 0000 0 -> 0011 3
 		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
 		  	  toks.objectcode.insert(toks.objectcode.length(),"3");
 		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.forwardreference ) //(3)	前面如果找不到(代表目的-來源(下一個)會是正的)不管有沒有base  ->p=1 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"00000");  //如果需要 forwardreference後面disp就先設定00000
-			  else if ( !toks.forwardreference ) { //(1)	前面如果找得到
+		  	  if ( toks.forwardreference ) // 
+		  	    toks.objectcode.insert(toks.objectcode.length(),"00000");  // 
+			  else if ( !toks.forwardreference ) { // 
 		  	    sicxe_set_address(token_packer, toks, address); 
 		  	    toks.objectcode.insert(toks.objectcode.length(),"0");
 				toks.objectcode.insert(toks.objectcode.length(),address); 
@@ -793,9 +1113,9 @@ void sicxe_setcode( Packed_Token token_packer, Tokens &toks ) {
 		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
 		  	  toks.objectcode.insert(toks.objectcode.length(),"7");
 		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.forwardreference ) //(3)	前面如果找不到(代表目的-來源(下一個)會是正的)不管有沒有base  ->p=1 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"00000");  //如果需要 forwardreference後面disp就先設定000
-			  else if ( !toks.forwardreference ) { //(1)	前面如果找得到
+		  	  if ( toks.forwardreference ) // 
+		  	    toks.objectcode.insert(toks.objectcode.length(),"00000");  // 
+			  else if ( !toks.forwardreference ) { // 
 			    sicxe_set_address(token_packer, toks, address); 
 		  	    toks.objectcode.insert(toks.objectcode.length(),"0");
 				toks.objectcode.insert(toks.objectcode.length(),address); 
@@ -805,9 +1125,9 @@ void sicxe_setcode( Packed_Token token_packer, Tokens &toks ) {
 		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
 		  	  toks.objectcode.insert(toks.objectcode.length(),"B");
 		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.forwardreference ) //(3)	前面如果找不到(代表目的-來源(下一個)會是正的)不管有沒有base  ->p=1 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"00000");  //如果需要 forwardreference後面disp就先設定000
-			  else if ( !toks.forwardreference ) { //(1)	前面如果找得到
+		  	  if ( toks.forwardreference ) // 
+		  	    toks.objectcode.insert(toks.objectcode.length(),"00000");  // 
+			  else if ( !toks.forwardreference ) { // 
                 sicxe_set_address(token_packer, toks, address); 
 		  	    toks.objectcode.insert(toks.objectcode.length(),"0");
 				toks.objectcode.insert(toks.objectcode.length(),address); 
@@ -817,9 +1137,9 @@ void sicxe_setcode( Packed_Token token_packer, Tokens &toks ) {
 		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
 		  	  toks.objectcode.insert(toks.objectcode.length(),"F");
 		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.forwardreference ) //(3)	前面如果找不到(代表目的-來源(下一個)會是正的)不管有沒有base  ->p=1 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"00000");  //如果需要 forwardreference後面disp就先設定000
-			  else if ( !toks.forwardreference ) { //(1)	前面如果找得到
+		  	  if ( toks.forwardreference ) // 
+		  	    toks.objectcode.insert(toks.objectcode.length(),"00000");  // 
+			  else if ( !toks.forwardreference ) { // 
 			    sicxe_set_address(token_packer, toks, address); 
 		  	    toks.objectcode.insert(toks.objectcode.length(),"0");
 				toks.objectcode.insert(toks.objectcode.length(),address); 
@@ -830,10 +1150,10 @@ void sicxe_setcode( Packed_Token token_packer, Tokens &toks ) {
 	} // else if
 } //sicxe_setcode
 
-bool sicxe_Set_p_b ( Packed_Token token_packer, Tokens &toks, string token ){  // format3 需要設定bp 將token丟到前面去找有沒有一樣label 
-		//(1)	前面如果找得到(代表目的-來源(下一個)會是負的)且沒有base       ->設定p=1
-		//(2)	前面如果找得到(代表目的-來源(下一個)會是負的)但有base         ->設定b=1
-		//(3)	前面如果找不到(代表目的-來源(下一個)會是正的)不管有沒有base   ->設定p=1
+bool sicxe_Set_p_b ( Packed_Token token_packer, Tokens &toks, string token ){  // 
+		// 
+		// 
+		// 
 	if ( toks.format == 3 ) {
 	  int num = 0;
 	  for ( int i = 0 ; i < token_packer.amount ; i++ ){
@@ -842,61 +1162,63 @@ bool sicxe_Set_p_b ( Packed_Token token_packer, Tokens &toks, string token ){  /
 		  break;
 	  } // for
 	  if ( token == token_packer.token_groups[num].label ) {
-		if ( token_packer.base )  //(2)	前面如果找得到(代表目的-來源(下一個)會是負的)但有base         ->設定b=1
-		  toks.b = 1;
-		else //(1)	前面如果找得到(代表目的-來源(下一個)會是負的)且沒有base       ->設定p=1
-		  toks.p = 1;
+		if ( token_packer.base )  // 
+		  toks.flags.b = true;
+		else // 
+		  toks.flags.p = true;
 		return true;
-	  } // 找得到
-	  else { //(3)	前面如果找不到(代表目的-來源(下一個)會是正的)不管有沒有base   ->設定p=1
-		toks.p = 1;
+	  } // 
+	  else { // 
+		toks.flags.p = true;
 		return false;
-	  } // else 找不到	
-    } // if
-    else if ( toks.format == 4 ){
-      for ( int i = 0 ; i < token_packer.amount ; i++ ){
-		if ( token == token_packer.token_groups[i].label )
-		  return true;
-	  } // for
-	  return false;
-	} // else if
-	
-} // sicxe_Set_p_b
+	  } // 
+	    } // if
+	    else if ( toks.format == 4 ){
+	      for ( int i = 0 ; i < token_packer.amount ; i++ ){
+			if ( token == token_packer.token_groups[i].label )
+			  return true;
+		  } // for
+		  return false;
+		} // else if
+		
+		return false;
+	} // sicxe_Set_p_b
 
 void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Instruction_Set sicxe[59] ) { 
-  if ( toks.tokens[0].tokentype == 5 ) { //有label 
+  if ( toks.tokens[0].type == TokenType::Label ) { // 
   	toks.label = toks.tokens[0].value;
-  	if ( toks.tokens[1].tokentype == 4 ) { // 有label +開頭 (format4) 
-  	  toks.format = 4;
-  	  toks.label_length = 4;
-  	  toks.ins = toks.tokens[2].value;
-  	  sicxe_Search_Instruction_Set( sicxe, toks.tokens[2].value, toks.format, toks.opformat, toks.objectcode );
-  	  if ( toks.opformat == 1 )    // (1) x (沒有的) [1/3/4]
-  	  	if ( !toks.tokens[3].value.empty() )
-  	  	  toks.error = "Syntax Error! : It should be nothing here.";
-	  else if ( toks.opformat == 2 ) {  //(2) m          [3/4]
+	  if ( toks.tokens[1].type == TokenType::Delimiter ) { // 
+	  	  toks.format = 4;
+	  	  toks.label_length = 4;
+	  	  toks.ins = toks.tokens[2].value;
+	  	  sicxe_Search_Instruction_Set( sicxe, toks.tokens[2].value, toks.format, toks.opformat, toks.objectcode );
+	  	  if ( toks.opformat == 1 ) {   // 
+	  	  	if ( !toks.tokens[3].value.empty() )
+	  	  	  toks.error = "Syntax Error! : It should be nothing here.";
+		  }
+		  else if ( toks.opformat == 2 ) {  //(2) m          [3/4]
 	  	if ( toks.tokens[3].value.empty() )
   	  	  toks.error = "Syntax Error! : It should have something here.";
   	  	else {
-  	  	  if ( toks.tokens[3].tokentype == 4 && toks.tokens[3].tokenvalue == 12 ){ // Immediate Addressing #
-  	  	    toks.i = 1;
+  	  	  if ( toks.tokens[3].type == TokenType::Delimiter && toks.tokens[3].tokenvalue == 12 ){ // Immediate Addressing #
+  	  	    toks.flags.i = true;
   	  	    if ( toks.tokens[4].value.empty() )
   	  	      toks.error = "Syntax Error! : It should have something behind #.";
   	  	    else
   	  	      toks.group1 = toks.tokens[4].value;
   	      } // if Immediate Addressing #
-  	      else if ( toks.tokens[3].tokentype == 4 && toks.tokens[3].tokenvalue == 13 ){ // Indirect Addressing @
-  	  	    toks.n = 1;
+  	      else if ( toks.tokens[3].type == TokenType::Delimiter && toks.tokens[3].tokenvalue == 13 ){ // Indirect Addressing @
+  	  	    toks.flags.n = true;
   	  	    if ( toks.tokens[4].value.empty() )
   	  	      toks.error = "Syntax Error! : It should have something behind @.";
   	  	    else
   	  	      toks.group1 = toks.tokens[4].value;
   	      } // else if Indirect Addressing @
   	      else { // <direct>|<index>|<literal>
-  	        toks.i = 1;
-  	        toks.n = 1;
-  	        if ( toks.tokens[4].tokentype == 4 && toks.tokens[4].tokenvalue == 1 ) { // <index>： <symbol>, X
-  	          toks.x = 1;
+  	        toks.flags.i = true;
+  	        toks.flags.n = true;
+  	        if ( toks.tokens[4].type == TokenType::Delimiter && toks.tokens[4].tokenvalue == 1 ) { // 
+  	          toks.flags.x = true;
   	          if ( toks.tokens[3].value.empty() )
   	            toks.error = "Syntax Error! : It's index mode.It should have something behind.";
   	          else
@@ -905,9 +1227,9 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
   	            toks.error = "Syntax Error! : It's index mode.It should have something behind.";
   	          else
   	            toks.group2 = toks.tokens[5].value;
-  	        } // if <index>： <symbol>, X
-  	        else if ( toks.tokens[3].tokentype == 4 && toks.tokens[3].tokenvalue == 11 ) { // <literal>： (1)= C''…(BYTE) (2) = X''…(BYTE) (3) =常數 (WORD)
-  	          if ( toks.tokens[5].tokentype = 7 ) {  // (1)= C''…(BYTE) (C已經不見了 
+  	        } // 
+  	        else if ( toks.tokens[3].type == TokenType::Delimiter && toks.tokens[3].tokenvalue == 11 ) { // 
+  	          if ( toks.tokens[5].type == TokenType::Literal ) {  // 
   	            toks.literal.label = toks.tokens[5].value;
   	            toks.literal.WORDorBYTE = "BYTE";
                 toks.literal.literal = toks.tokens[5].value;
@@ -915,8 +1237,8 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[4].value );
                 toks.literal.literal.insert( 0, "C" );
                 toks.group1 = toks.tokens[5].value;
-			  } // if (1)= X''…(BYTE) (X已經不見了  
-			  if ( toks.tokens[5].tokentype == 6 ) {  //  (2) = X''…(BYTE) (X已經不見了
+			  } // 
+			  if ( toks.tokens[5].type == TokenType::Number ) {  // 
   	            toks.literal.label = toks.tokens[5].value;
   	            toks.literal.WORDorBYTE = "BYTE";
                 toks.literal.literal = toks.tokens[5].value;
@@ -924,15 +1246,15 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[4].value );
                 toks.literal.literal.insert( 0, "X" );
                 toks.group1 = toks.tokens[5].value;
-			  } // if  (2) = C''…(BYTE) (C已經不見了
-			  else if ( toks.tokens[4].tokentype == 6 ) {  // (3) =常數 (WORD) 
+			  } // 
+			  else if ( toks.tokens[4].type == TokenType::Number ) {  // 
 			    toks.literal.label = toks.tokens[4].value;
 			    toks.literal.label.insert( 0, toks.tokens[3].value );
 			    toks.literal.WORDorBYTE = "WORD";
 			    toks.literal.literal = toks.tokens[4].value;
 			    toks.group1 = toks.literal.label;
-			  } // else if (3) =常數 (WORD)
-  	        } // else if <literal>： (1)= C''…(BYTE) (2) = X''…(BYTE) (3) =常數 (WORD)
+			  } // 
+  	        } // 
   	        else if ( !toks.tokens[3].value.empty() && toks.tokens[4].value.empty() ) { // <symbol> | address
   	          toks.group1 = toks.tokens[3].value;
   	        } // else if <symbol> | address
@@ -942,44 +1264,44 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
 		} // else
 	  } // else if (2) m          [3/4]
 	} // if
-	else if ( toks.tokens[1].tokentype == 1 ) { //format123 
+	else if ( toks.tokens[1].type == TokenType::Instruction ) { //format123 
 	  toks.ins = toks.tokens[1].value;
   	  sicxe_Search_Instruction_Set( sicxe, toks.tokens[1].value, toks.format, toks.opformat, toks.objectcode );
-  	  if ( toks.opformat == 1 )  {   // (1) x (沒有的) [1/3/4]  這裡只會有1/3的可能 
+  	  if ( toks.opformat == 1 )  {   // 
   	    toks.label_length = 1;
   	  	if ( !toks.tokens[2].value.empty() )
   	  	  toks.error = "Syntax Error! : It should be nothing here.";
       } // if
-	  else if ( toks.opformat == 2 ) {  //(2) m          [3/4]  這裡只會有3的可能 
+	  else if ( toks.opformat == 2 ) {  // 
 	    toks.label_length = 3;
 	  	if ( toks.tokens[2].value.empty() )
   	  	  toks.error = "Syntax Error! : It should have something here.";
   	  	else {
-  	  	  if ( toks.tokens[2].tokentype == 4 && toks.tokens[2].tokenvalue == 12 ){ // Immediate Addressing #
+  	  	  if ( toks.tokens[2].type == TokenType::Delimiter && toks.tokens[2].tokenvalue == 12 ){ // Immediate Addressing #
   	  	    if ( !sicxe_Set_p_b ( token_packer, toks, toks.tokens[3].value ) )
   	  	      toks.forwardreference = true;
-  	  	    toks.i = 1;
+  	  	    toks.flags.i = true;
   	  	    if ( toks.tokens[3].value.empty() )
   	  	      toks.error = "Syntax Error! : It should have something behind #.";
   	  	    else
   	  	      toks.group1 = toks.tokens[3].value;
   	      } // if Immediate Addressing #
-  	      else if ( toks.tokens[2].tokentype == 4 && toks.tokens[2].tokenvalue == 13 ){ // Indirect Addressing @
+  	      else if ( toks.tokens[2].type == TokenType::Delimiter && toks.tokens[2].tokenvalue == 13 ){ // Indirect Addressing @
   	        if ( !sicxe_Set_p_b ( token_packer, toks, toks.tokens[3].value ) )
   	  	      toks.forwardreference = true;
-  	  	    toks.n = 1;
+  	  	    toks.flags.n = true;
   	  	    if ( toks.tokens[3].value.empty() )
   	  	      toks.error = "Syntax Error! : It should have something behind @.";
   	  	    else
   	  	      toks.group1 = toks.tokens[3].value;
   	      } // else if Indirect Addressing @
   	      else { // <direct>|<index>|<literal>
-  	        toks.i = 1;
-  	        toks.n = 1;
-  	        if ( toks.tokens[3].tokentype == 4 && toks.tokens[3].tokenvalue == 1 ) { // <index>： <symbol>, X
+  	        toks.flags.i = true;
+  	        toks.flags.n = true;
+  	        if ( toks.tokens[3].type == TokenType::Delimiter && toks.tokens[3].tokenvalue == 1 ) { // 
   	          if ( !sicxe_Set_p_b ( token_packer, toks, toks.tokens[2].value ) )
   	  	        toks.forwardreference = true;
-  	          toks.x = 1;
+  	          toks.flags.x = true;
   	          if ( toks.tokens[2].value.empty() )
   	            toks.error = "Syntax Error! : It's index mode.It should have something behind.";
   	          else
@@ -988,9 +1310,9 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
   	            toks.error = "Syntax Error! : It's index mode.It should have something behind.";
   	          else
   	            toks.group2 = toks.tokens[4].value;
-  	        } // if <index>： <symbol>, X
-  	        else if ( toks.tokens[2].tokentype == 4 && toks.tokens[2].tokenvalue == 11 ) { // <literal>： (1)= C''…(BYTE) (2) = X''…(BYTE) (3) =常數 (WORD)
-  	          if ( toks.tokens[4].tokentype == 7 ) {  // (1)= C''…(BYTE) (C已經不見了 
+  	        } // 
+  	        else if ( toks.tokens[2].type == TokenType::Delimiter && toks.tokens[2].tokenvalue == 11 ) { // 
+  	          if ( toks.tokens[4].type == TokenType::Literal ) {  // 
   	            toks.literal.label = toks.tokens[4].value;
   	            toks.literal.WORDorBYTE = "BYTE";
                 toks.literal.literal = toks.tokens[4].value;
@@ -998,8 +1320,8 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
                 toks.literal.literal.insert( 0, "C" );
                 toks.group1 = toks.tokens[4].value;
-			  } // if (1)= X''…(BYTE) (X已經不見了  
-			  if ( toks.tokens[4].tokentype == 6 ) {  //  (2) = X''…(BYTE) (X已經不見了
+			  } // 
+			  if ( toks.tokens[4].type == TokenType::Number ) {  // 
   	            toks.literal.label = toks.tokens[4].value;
   	            toks.literal.WORDorBYTE = "BYTE";
                 toks.literal.literal = toks.tokens[4].value;
@@ -1007,15 +1329,15 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
                 toks.literal.literal.insert( 0, "X" );
                 toks.group1 = toks.tokens[4].value;
-			  } // if  (2) = C''…(BYTE) (C已經不見了
-			  else if ( toks.tokens[3].tokentype == 6 ) {  // (3) =常數 (WORD) 
+			  } // 
+			  else if ( toks.tokens[3].type == TokenType::Number ) {  // 
 			    toks.literal.label = toks.tokens[3].value;
 			    toks.literal.label.insert( 0, toks.tokens[2].value );
 			    toks.literal.WORDorBYTE = "WORD";
 			    toks.literal.literal = toks.tokens[3].value;
 			    toks.group1 = toks.literal.label;
-			  } // else if (3) =常數 (WORD)
-  	        } // else if <literal>： (1)= C''…(BYTE) (2) = X''…(BYTE) (3) =常數 (WORD)
+			  } // 
+  	        } // 
   	        else if ( !toks.tokens[2].value.empty() && toks.tokens[3].value.empty() ) { // <symbol> | address
   	          if ( !sicxe_Set_p_b ( token_packer, toks, toks.tokens[2].value ) )
   	  	        toks.forwardreference = true;
@@ -1025,7 +1347,7 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
   	          toks.error = "Syntax Error! : It should be something here.";
 		  } // else <direct>|<index>|<literal>
 		} // else
-	  } // else if (2) m     [3/4] 裡只會有3的可能  
+	  } // 
 	  else if ( toks.opformat == 3 ) {  //(3) r1         [2]
 	    toks.label_length = 2;
 	    toks.group1 = toks.tokens[2].value;
@@ -1045,72 +1367,87 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
 	    toks.group1 = toks.tokens[2].value;
 	  } // else if (6) n          [2]
 	} // else if format123 
-	else if ( toks.tokens[1].tokentype == 2 ) { // pseudo instruction 1.START 2.END 3.EQU 4.BYTE 5.WORD 6.LTORG 7.BASE 8.RESB 9.RESW
+	else if ( toks.tokens[1].type == TokenType::Pseudo ) { // pseudo instruction 1.START 2.END 3.BYTE 4.WORD 5.RESB 6.RESW 7.EQU 8.BASE 9.LTORG
 	  toks.ins = toks.tokens[1].value;
 	  if ( toks.tokens[1].tokenvalue == 1 ) {//  {label} START hex_num
 	    toks.group1 = toks.tokens[2].value;
 	    toks.START = true;
-	    int num = atoi(toks.tokens[2].value.c_str());
-	    toks.location = num;  //設定起始位置 
+	    int num = 0;
+	    if ( parseHexNumber(toks.tokens[2].value, num) )
+	      toks.location = num;  // 
+	    else
+	      toks.error = "Syntax Error! : START expects hexadecimal.";
       }// if START
-      else if ( toks.tokens[1].tokenvalue == 2 || toks.tokens[1].tokenvalue == 6 ) { //  {label} END {label} || {label} LTORG
+      else if ( toks.tokens[1].tokenvalue == 2 || toks.tokens[1].tokenvalue == 9 ) { //  {label} END {label} || {label} LTORG
         toks.end =true;
         toks.group1 = toks.tokens[2].value;
 	    token_packer.end = true;
       } // else of
-      else if ( toks.tokens[1].tokenvalue == 3 ) {//  label EQU label | dec_num | *  四則運算限定於label與label
+      else if ( toks.tokens[1].tokenvalue == 7 ) {// 
         toks.EQU = true;
-        if ( toks.tokens[2].tokentype == 6 )
-          toks.location = atoi(toks.tokens[2].value.c_str());
+        int equValue = 0;
+        string errorMsg;
+        if ( evaluateEquExpression(token_packer, toks, 2, equValue, errorMsg) )
+          toks.location = equValue;
+        else if ( !errorMsg.empty() )
+          toks.error = errorMsg;
         toks.group1 = toks.tokens[2].value;
       }// else if EQU
-      else if ( toks.tokens[1].tokenvalue == 4 ) {// {label} BYTE X''… | C''… | dec_num
-        if ( toks.tokens[3].tokentype = 7 ) {  // '(4,9) EOF(7,18) '(4,9) // C'…(BYTE) (C已經不見了
-          toks.group1 = toks.tokens[3].value;  //直接把 EOF 一個一個翻成十六進位 
+	      else if ( toks.tokens[1].tokenvalue == 4 ) {// 
+	        if ( toks.tokens[3].type == TokenType::Literal ) {  // 
+          toks.group1 = toks.tokens[3].value;  // 
 	    } // if
-	    else if ( toks.tokens[3].tokentype == 6 ) {  // '(4,9) F 1(6,51) '(4,9) // X''…(BYTE) (X已經不見了 
-	      toks.group1 = toks.tokens[3].value;  //直接放object code    
+	    else if ( toks.tokens[3].type == TokenType::Number ) {  // 
+	      toks.group1 = toks.tokens[3].value;  // 
 		} // else if
-		else if ( toks.tokens[2].tokentype == 6 ) {  // dec_num
+		else if ( toks.tokens[2].type == TokenType::Number ) {  // dec_num
 	      toks.group1 = toks.tokens[2].value; 
 		} // else if
       }// else if BYTE
-      else if ( toks.tokens[1].tokenvalue == 5 ) {//  {label} WORD X''… | C''… | dec_num
-	    if ( toks.tokens[3].tokentype = 7 ) {  // '(4,9) EOF(7,18) '(4,9) // C'…(WORD) (C已經不見了
-          toks.group1 = toks.tokens[3].value;  //直接把 EOF 一個一個翻成十六進位 
+	      else if ( toks.tokens[1].tokenvalue == 4 ) {// 
+		    if ( toks.tokens[3].type == TokenType::Literal ) {  // 
+          toks.group1 = toks.tokens[3].value;  // 
 	    } // if
-	    else if ( toks.tokens[3].tokentype == 6 ) {  // '(4,9) F 1(6,51) '(4,9) // X''…(WORD) (X已經不見了 
-	      toks.group1 = toks.tokens[3].value;  //直接放object code    
+	    else if ( toks.tokens[3].type == TokenType::Number ) {  // 
+	      toks.group1 = toks.tokens[3].value;  // 
 		} // else if
-		else if ( toks.tokens[2].tokentype == 6 ) {  // dec_num
+		else if ( toks.tokens[2].type == TokenType::Number ) {  // dec_num
 	      toks.group1 = toks.tokens[2].value; 
 		} // else if
       }// else if WORD
-      else if ( toks.tokens[1].tokenvalue == 7 ) {//  {label} BASE dec_num | symbol
+      else if ( toks.tokens[1].tokenvalue == 8 ) {//  {label} BASE dec_num | symbol
         toks.base = true;
         token_packer.base = true;
         toks.group1 = toks.tokens[2].value; 
-        token_packer.base_label = toks.tokens[2].value; 
+        if ( toks.tokens[2].type == TokenType::Number ) {
+          int numericBase = atoi(toks.tokens[2].value.c_str());
+          token_packer.base_label.clear();
+          token_packer.base_hexlocation.clear();
+          sicxe_setlocation(numericBase, token_packer.base_hexlocation);
+        } else {
+          token_packer.base_label = toks.tokens[2].value; 
+          token_packer.base_hexlocation.clear();
+        }
       }// else if BASE
-      else if ( toks.tokens[1].tokenvalue == 8 ) {//  {label} RESB dec_num
+      else if ( toks.tokens[1].tokenvalue == 5 ) {//  {label} RESB dec_num
         toks.label_length = atoi(toks.tokens[2].value.c_str());
         toks.group1 = toks.tokens[2].value;
       }// else if RESB
-      else if ( toks.tokens[1].tokenvalue == 9 ) {//  {label} RESW dec_num
+      else if ( toks.tokens[1].tokenvalue == 6 ) {//  {label} RESW dec_num
         toks.label_length = atoi(toks.tokens[2].value.c_str())*3;
-        //cout << toks.label_length ; // test
+        //cout << toks.label_length ; // 
         toks.group1 = toks.tokens[2].value;
       }// else if RESW
 	} // else if  pseudo instruction
-	else if ( toks.tokens[0].tokentype == 5 && toks.tokens[1].tokentype != 1 && toks.tokens[1].tokentype != 2 && toks.tokens[1].tokentype != 4 )
+	else if ( toks.tokens[0].type == TokenType::Label && toks.tokens[1].type != TokenType::Instruction && toks.tokens[1].type != TokenType::Pseudo && toks.tokens[1].type != TokenType::Delimiter )
       toks.error = "Syntax Error! : It doesn't have instructions.";
-  } // if 有label 
-  else if ( toks.tokens[0].tokentype == 4 ) {  //沒有label +開頭 (format4) 
+  } // 
+  else if ( toks.tokens[0].type == TokenType::Delimiter ) {  // 
     toks.label_length = 4;
   	  toks.ins = toks.tokens[1].value;
   	  sicxe_Search_Instruction_Set( sicxe, toks.tokens[1].value, toks.format, toks.opformat, toks.objectcode );
   	  toks.format = 4;
-  	  if ( toks.opformat == 1 ) {   // (1) x (沒有的) [1/3/4]
+  	  if ( toks.opformat == 1 ) {   // 
   	  	if ( !toks.tokens[2].value.empty() )
   	  	  toks.error = "Syntax Error! : It should be nothing here.";
       } // if
@@ -1118,25 +1455,25 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
 	  	if ( toks.tokens[2].value.empty() )
   	  	  toks.error = "Syntax Error! : It should have something here.";
   	  	else {
-  	  	  if ( toks.tokens[2].tokentype == 4 && toks.tokens[2].tokenvalue == 12 ){ // Immediate Addressing # 
-  	  	    toks.i = 1;
+  	  	  if ( toks.tokens[2].type == TokenType::Delimiter && toks.tokens[2].tokenvalue == 12 ){ // Immediate Addressing # 
+  	  	    toks.flags.i = true;
   	  	    if ( toks.tokens[3].value.empty() )
   	  	      toks.error = "Syntax Error! : It should have something behind #.";
   	  	    else
   	  	      toks.group1 = toks.tokens[3].value;
   	      } // if Immediate Addressing #
-  	      else if ( toks.tokens[2].tokentype == 4 && toks.tokens[2].tokenvalue == 13 ){ // Indirect Addressing @
-  	  	    toks.n = 1;
+  	      else if ( toks.tokens[2].type == TokenType::Delimiter && toks.tokens[2].tokenvalue == 13 ){ // Indirect Addressing @
+  	  	    toks.flags.n = true;
   	  	    if ( toks.tokens[3].value.empty() )
   	  	      toks.error = "Syntax Error! : It should have something behind @.";
   	  	    else
   	  	      toks.group1 = toks.tokens[3].value;
   	      } // else if Indirect Addressing @
   	      else { // <direct>|<index>|<literal>
-  	        toks.i = 1;
-  	        toks.n = 1;
-  	        if ( toks.tokens[3].tokentype == 4 && toks.tokens[3].tokenvalue == 1 ) { // <index>： <symbol>, X
-  	          toks.x = 1;
+  	        toks.flags.i = true;
+  	        toks.flags.n = true;
+  	        if ( toks.tokens[3].type == TokenType::Delimiter && toks.tokens[3].tokenvalue == 1 ) { // 
+  	          toks.flags.x = true;
   	          if ( toks.tokens[2].value.empty() )
   	            toks.error = "Syntax Error! : It's index mode.It should have something behind.";
   	          else
@@ -1145,9 +1482,9 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
   	            toks.error = "Syntax Error! : It's index mode.It should have something behind.";
   	          else
   	            toks.group2 = toks.tokens[4].value;
-  	        } // if <index>： <symbol>, X
-  	        else if ( toks.tokens[2].tokentype == 4 && toks.tokens[2].tokenvalue == 11 ) { // <literal>： (1)= C''…(BYTE) (2) = X''…(BYTE) (3) =常數 (WORD)
-  	          if ( toks.tokens[4].tokentype == 7 ) {  // (1)= C''…(BYTE) (C已經不見了 
+  	        } // 
+  	        else if ( toks.tokens[2].type == TokenType::Delimiter && toks.tokens[2].tokenvalue == 11 ) { // 
+  	          if ( toks.tokens[4].type == TokenType::Literal ) {  // 
   	            toks.literal.label = toks.tokens[4].value;
   	            toks.literal.WORDorBYTE = "BYTE";
                 toks.literal.literal = toks.tokens[4].value;
@@ -1155,8 +1492,8 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
                 toks.literal.literal.insert( 0, "C" );
                 toks.group1 = toks.tokens[4].value;
-			  } // if (1)= X''…(BYTE) (X已經不見了  
-			  if ( toks.tokens[4].tokentype == 6 ) {  //  (2) = X''…(BYTE) (X已經不見了
+			  } // 
+			  if ( toks.tokens[4].type == TokenType::Number ) {  // 
   	            toks.literal.label = toks.tokens[4].value;
   	            toks.literal.WORDorBYTE = "BYTE";
                 toks.literal.literal = toks.tokens[4].value;
@@ -1164,15 +1501,15 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
                 toks.literal.literal.insert( 0, "X" );
                 toks.group1 = toks.tokens[4].value;
-			  } // if  (2) = C''…(BYTE) (C已經不見了
-			  else if ( toks.tokens[3].tokentype == 6 ) {  // (3) =常數 (WORD) 
+			  } // 
+			  else if ( toks.tokens[3].type == TokenType::Number ) {  // 
 			    toks.literal.label = toks.tokens[3].value;
 			    toks.literal.label.insert( 0, toks.tokens[2].value );
 			    toks.literal.WORDorBYTE = "WORD";
 			    toks.literal.literal = toks.tokens[3].value;
 			    toks.group1 = toks.literal.label;
-			  } // else if (3) =常數 (WORD)
-  	        } // else if <literal>： (1)= C''…(BYTE) (2) = X''…(BYTE) (3) =常數 (WORD)
+			  } // 
+  	        } // 
   	        else if ( !toks.tokens[2].value.empty() && toks.tokens[3].value.empty() ) { // <symbol> | address
   	          if ( !isNumber(toks.tokens[2].value) )
   	            if ( !sicxe_Set_p_b ( token_packer, toks, toks.tokens[2].value ) )
@@ -1185,44 +1522,44 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
 		} // else
 	  } // else if (2) m          [3/4]
   } // else if 
-  else if ( toks.tokens[0].tokentype == 1 ) {  //沒有label format123
+  else if ( toks.tokens[0].type == TokenType::Instruction ) {  // 
       toks.ins = toks.tokens[0].value;
   	  sicxe_Search_Instruction_Set( sicxe, toks.tokens[0].value, toks.format, toks.opformat, toks.objectcode );
-  	  if ( toks.opformat == 1 ) {   // (1) x (沒有的) [1/3/4]  這裡只會有1/3的可能 
+  	  if ( toks.opformat == 1 ) {   // 
   	    toks.label_length = 1;
   	  	if ( !toks.tokens[1].value.empty() )
   	  	  toks.error = "Syntax Error! : It should be nothing here.";
       } // if
-	  else if ( toks.opformat == 2 ) {  //(2) m          [3/4]  這裡只會有3的可能 
+	  else if ( toks.opformat == 2 ) {  // 
 	    toks.label_length = 3;
 	  	if ( toks.tokens[1].value.empty() )
   	  	  toks.error = "Syntax Error! : It should have something here.";
   	  	else {
-  	  	  if ( toks.tokens[1].tokentype == 4 && toks.tokens[1].tokenvalue == 12 ){ // Immediate Addressing #
+  	  	  if ( toks.tokens[1].type == TokenType::Delimiter && toks.tokens[1].tokenvalue == 12 ){ // Immediate Addressing #
   	  	    if ( !sicxe_Set_p_b ( token_packer, toks, toks.tokens[2].value ) )
   	  	      toks.forwardreference = true;
-  	  	    toks.i = 1;
+  	  	    toks.flags.i = true;
   	  	    if ( toks.tokens[2].value.empty() )
   	  	      toks.error = "Syntax Error! : It should have something behind #.";
   	  	    else
   	  	      toks.group1 = toks.tokens[2].value;
   	      } // if Immediate Addressing #
-  	      else if ( toks.tokens[1].tokentype == 4 && toks.tokens[1].tokenvalue == 13 ){ // Indirect Addressing @
+  	      else if ( toks.tokens[1].type == TokenType::Delimiter && toks.tokens[1].tokenvalue == 13 ){ // Indirect Addressing @
   	        if ( !sicxe_Set_p_b ( token_packer, toks, toks.tokens[2].value ) )
   	  	      toks.forwardreference = true;
-  	  	    toks.n = 1;
+  	  	    toks.flags.n = true;
   	  	    if ( toks.tokens[2].value.empty() )
   	  	      toks.error = "Syntax Error! : It should have something behind @.";
   	  	    else
   	  	      toks.group1 = toks.tokens[2].value;
   	      } // else if Indirect Addressing @
   	      else { // <direct>|<index>|<literal>
-  	        toks.i = 1;
-  	        toks.n = 1;
-  	        if ( toks.tokens[2].tokentype == 4 && toks.tokens[2].tokenvalue == 1 ) { // <index>： <symbol>, X
+  	        toks.flags.i = true;
+  	        toks.flags.n = true;
+  	        if ( toks.tokens[2].type == TokenType::Delimiter && toks.tokens[2].tokenvalue == 1 ) { // 
   	          if ( !sicxe_Set_p_b ( token_packer, toks, toks.tokens[1].value ) )
   	  	        toks.forwardreference = true;
-  	          toks.x = 1;
+  	          toks.flags.x = true;
   	          if ( toks.tokens[1].value.empty() )
   	            toks.error = "Syntax Error! : It's index mode.It should have something behind.";
   	          else
@@ -1231,9 +1568,9 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
   	            toks.error = "Syntax Error! : It's index mode.It should have something behind.";
   	          else
   	            toks.group2 = toks.tokens[3].value;
-  	        } // if <index>： <symbol>, X
-  	        else if ( toks.tokens[1].tokentype == 4 && toks.tokens[1].tokenvalue == 11 ) { // <literal>： (1)= C''…(BYTE) (2) = X''…(BYTE) (3) =常數 (WORD)
-  	          if ( toks.tokens[3].tokentype == 7 ) {  // (1)= C''…(BYTE) (C已經不見了 
+  	        } // 
+  	        else if ( toks.tokens[1].type == TokenType::Delimiter && toks.tokens[1].tokenvalue == 11 ) { // 
+  	          if ( toks.tokens[3].type == TokenType::Literal ) {  // 
   	            toks.literal.label = toks.tokens[3].value;
   	            toks.literal.WORDorBYTE = "BYTE";
                 toks.literal.literal = toks.tokens[3].value;
@@ -1241,8 +1578,8 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[2].value );
                 toks.literal.literal.insert( 0, "C" );
                 toks.group1 = toks.tokens[3].value;
-			  } // if (1)= X''…(BYTE) (X已經不見了  
-			  if ( toks.tokens[3].tokentype == 6 ) {  //  (2) = X''…(BYTE) (X已經不見了
+			  } // 
+			  if ( toks.tokens[3].type == TokenType::Number ) {  // 
   	            toks.literal.label = toks.tokens[3].value;
   	            toks.literal.WORDorBYTE = "BYTE";
                 toks.literal.literal = toks.tokens[3].value;
@@ -1250,15 +1587,15 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[2].value );
                 toks.literal.literal.insert( 0, "X" );
                 toks.group1 = toks.tokens[3].value;
-			  } // if  (2) = C''…(BYTE) (C已經不見了
-			  else if ( toks.tokens[2].tokentype == 6 ) {  // (3) =常數 (WORD) 
+			  } // 
+			  else if ( toks.tokens[2].type == TokenType::Number ) {  // 
 			    toks.literal.label = toks.tokens[2].value;
 			    toks.literal.label.insert( 0, toks.tokens[1].value );
 			    toks.literal.WORDorBYTE = "WORD";
 			    toks.literal.literal = toks.tokens[2].value;
 			    toks.group1 = toks.literal.label;
-			  } // else if (3) =常數 (WORD)
-  	        } // else if <literal>： (1)= C''…(BYTE) (2) = X''…(BYTE) (3) =常數 (WORD)
+			  } // 
+  	        } // 
   	        else if ( !toks.tokens[1].value.empty() && toks.tokens[2].value.empty() ) { // <symbol> | address
   	          if ( !isNumber(toks.tokens[1].value) )
   	            if ( !sicxe_Set_p_b ( token_packer, toks, toks.tokens[1].value ) )
@@ -1269,7 +1606,7 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
   	          toks.error = "Syntax Error! : It should be something here.";
 		  } // else <direct>|<index>|<literal>
 		} // else
-	  } // else if (2) m     [3/4] 裡只會有3的可能  
+	  } // 
 	  else if ( toks.opformat == 3 ) {  //(3) r1         [2]
 	    toks.label_length = 2;
 	    toks.group1 = toks.tokens[1].value;
@@ -1288,64 +1625,79 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
 	    toks.label_length = 2;
 	    toks.group1 = toks.tokens[1].value;
 	  } // else if (6) n          [2]
-	} // else if 沒有label format123 
-  else if ( toks.tokens[0].tokentype == 2 ) {  //沒有label pseudo instruction
+	} // 
+  else if ( toks.tokens[0].type == TokenType::Pseudo ) {  // 
 	  toks.ins = toks.tokens[0].value;
 	  if ( toks.tokens[0].tokenvalue == 1 ) {//  {label} START hex_num
 	    toks.START = true;
 	    toks.group1 = toks.tokens[1].value;
-	    int num = atoi(toks.tokens[1].value.c_str());
-	    toks.location = num;  //設定起始位置 
+	    int num = 0;
+	    if ( parseHexNumber(toks.tokens[1].value, num) )
+	      toks.location = num;  // 
+	    else
+	      toks.error = "Syntax Error! : START expects hexadecimal.";
       }// if START
-      else if ( toks.tokens[0].tokenvalue == 2 || toks.tokens[0].tokenvalue == 6 ) {//  {label} END {label} || {label} LTORG
+      else if ( toks.tokens[0].tokenvalue == 2 || toks.tokens[0].tokenvalue == 9 ) {//  {label} END {label} || {label} LTORG
         toks.end =true;
         toks.group1 = toks.tokens[1].value;
 	    token_packer.end = true;
 	  }// else if {label} END {label} || {label} LTORG
-      else if ( toks.tokens[0].tokenvalue == 3 ) { //  label EQU label | dec_num | *  四則運算限定於label與label
+      else if ( toks.tokens[0].tokenvalue == 7 ) { // 
         toks.EQU = true;
-        if ( toks.tokens[1].tokentype == 6 )
-          toks.location = atoi(toks.tokens[1].value.c_str());
+        int equValue = 0;
+        string errorMsg;
+        if ( evaluateEquExpression(token_packer, toks, 1, equValue, errorMsg) )
+          toks.location = equValue;
+        else if ( !errorMsg.empty() )
+          toks.error = errorMsg;
         toks.group1 = toks.tokens[1].value;
-      }// else if label EQU label | dec_num | *  四則運算限定於label與label
-      else if ( toks.tokens[0].tokenvalue == 4 ) {// {label} BYTE X''… | C''… | dec_num
-        if ( toks.tokens[2].tokentype == 7 ) {  // '(4,9) EOF(7,18) '(4,9) // C'…(BYTE) (C已經不見了
-          toks.group1 = toks.tokens[2].value;  //直接把 EOF 一個一個翻成十六進位 
+      }// 
+      else if ( toks.tokens[0].tokenvalue == 3 ) {// 
+        if ( toks.tokens[2].type == TokenType::Literal ) {  // 
+          toks.group1 = toks.tokens[2].value;  // 
 	    } // if
-	    else if ( toks.tokens[2].tokentype == 6 ) {  // '(4,9) F 1(6,51) '(4,9) // X''…(BYTE) (X已經不見了 
-	      toks.group1 = toks.tokens[2].value;  //直接放object code    
+	    else if ( toks.tokens[2].type == TokenType::Number ) {  // 
+	      toks.group1 = toks.tokens[2].value;  // 
 		} // else if
-		else if ( toks.tokens[1].tokentype == 6 ) {  // dec_num
+		else if ( toks.tokens[1].type == TokenType::Number ) {  // dec_num
 	      toks.group1 = toks.tokens[1].value; 
 		} // else if
       }// else if BYTE
-      else if ( toks.tokens[0].tokenvalue == 5 ) {//  {label} WORD X''… | C''… | dec_num
-	    if ( toks.tokens[2].tokentype == 7 ) {  // '(4,9) EOF(7,18) '(4,9) // C'…(WORD) (C已經不見了
-          toks.group1 = toks.tokens[2].value;  //直接把 EOF 一個一個翻成十六進位 
+      else if ( toks.tokens[0].tokenvalue == 4 ) {// 
+	    if ( toks.tokens[2].type == TokenType::Literal ) {  // 
+          toks.group1 = toks.tokens[2].value;  // 
 	    } // if
-	    else if ( toks.tokens[2].tokentype == 6 ) {  // '(4,9) F 1(6,51) '(4,9) // X''…(WORD) (X已經不見了 
-	      toks.group1 = toks.tokens[2].value;  //直接放object code    
+	    else if ( toks.tokens[2].type == TokenType::Number ) {  // 
+	      toks.group1 = toks.tokens[2].value;  // 
 		} // else if
-		else if ( toks.tokens[1].tokentype == 6 ) {  // dec_num
+		else if ( toks.tokens[1].type == TokenType::Number ) {  // dec_num
 	      toks.group1 = toks.tokens[1].value; 
 		} // else if
       }// else if WORD
-      else if ( toks.tokens[0].tokenvalue == 7 ) {//  {label} BASE dec_num | symbol
+      else if ( toks.tokens[0].tokenvalue == 8 ) {//  {label} BASE dec_num | symbol
         toks.base = true;
         token_packer.base = true;
         toks.group1 = toks.tokens[1].value; 
-        token_packer.base_label = toks.tokens[1].value; 
+        if ( toks.tokens[1].type == TokenType::Number ) {
+          int numericBase = atoi(toks.tokens[1].value.c_str());
+          token_packer.base_label.clear();
+          token_packer.base_hexlocation.clear();
+          sicxe_setlocation(numericBase, token_packer.base_hexlocation);
+        } else {
+          token_packer.base_label = toks.tokens[1].value; 
+          token_packer.base_hexlocation.clear();
+        }
       }// else if BASE
-      else if ( toks.tokens[0].tokenvalue == 8 ) {//  {label} RESB dec_num
+      else if ( toks.tokens[0].tokenvalue == 5 ) {//  {label} RESB dec_num
         toks.label_length = atoi(toks.tokens[1].value.c_str());
         toks.group1 = toks.tokens[1].value;
       }// else if RESB
-      else if ( toks.tokens[0].tokenvalue == 9 ) {//  {label} RESW dec_num
+      else if ( toks.tokens[0].tokenvalue == 6 ) {//  {label} RESW dec_num
         toks.label_length = atoi(toks.tokens[1].value.c_str())*3;
         toks.group1 = toks.tokens[1].value;
       }// else if RESW
-  } // else if 沒有label pseudo instruction
-  else if ( toks.tokens[0].tokentype != 5 && toks.tokens[0].tokentype != 1 && toks.tokens[0].tokentype != 2 && toks.tokens[0].tokentype != 4 )
+  } // 
+  else if ( toks.tokens[0].type != TokenType::Label && toks.tokens[0].type != TokenType::Instruction && toks.tokens[0].type != TokenType::Pseudo && toks.tokens[0].type != TokenType::Delimiter )
     toks.error = "Syntax Error! : It doesn't have label and instructions.";
 } // sicxe_RecordAndSyntax
 
@@ -1359,7 +1711,7 @@ void sicxe_setbase( Packed_Token &token_packer ){
 void sicxe_resetcodedisp( Packed_Token &token_packer ){
 	for ( int i = 0 ; i < token_packer.amount ; i++ ){
 		string disp = token_packer.base_hexlocation;
-		if ( token_packer.token_groups[i].b && !token_packer.token_groups[i].forwardreference ) {
+		if ( token_packer.token_groups[i].flags.b && !token_packer.token_groups[i].forwardreference ) {
 			sicxe_set_disp( token_packer, token_packer.token_groups[i], disp );
 			token_packer.token_groups[i].objectcode.erase(token_packer.token_groups[i].objectcode.length()-1,1);
 			token_packer.token_groups[i].objectcode.erase(token_packer.token_groups[i].objectcode.length()-1,1);
@@ -1373,7 +1725,7 @@ void sicxe_resetcodedisp( Packed_Token &token_packer ){
 void sicxe_pass2( Packed_Token &token_packer ){
 	for ( int i = 0 ; i < token_packer.amount ; i++ ) {
 		string address;
-		//cout << token_packer.token_groups[i].ins << token_packer.token_groups[i].forwardreference <<endl ; // test
+		//cout << token_packer.token_groups[i].ins << token_packer.token_groups[i].forwardreference <<endl ; // 
 		if ( token_packer.token_groups[i].forwardreference ) {
 			if ( token_packer.token_groups[i].format == 4 ) {
 			  token_packer.token_groups[i].objectcode.erase(token_packer.token_groups[i].objectcode.length()-1,1);
@@ -1429,35 +1781,25 @@ void sic_setlocation ( int n, string &hex ) {
 } //sic_setlocation
 
 void sic_setline( string &setedline, int line ) {
-	string result;
 	string temp = std::to_string(line);
-    if ( temp.length() != 4 ) {
-      for ( int i = 4-temp.length() ; i > 0 ; i-- ){
-    	if ( !temp.empty() ) {
-    	  result.insert( 0 , temp);
-    	  temp.clear();
-		} // if
-    	result.insert( 0 , " ");
-	  } // for
-	} // if
-	else 
-      result = temp;
-	setedline = result;
+	while ( temp.length() < 3 )
+	  temp.insert(0, " ");
+	setedline = temp;
 } //sic_setline
 
 void sic_index_set_address( Tokens &toks, string address ) {
-	// test 1039
+	//  1039
 	string temp;
 	string x = "1";
 	temp.append(1, address[0]); //1
 	address.erase(0,1); //039
-	// test 1
+	//  1
 	HexaToBin( temp );
-	// test 0001
+	//  0001
 	temp.erase(0,1);
-	// test 001
+	//  001
 	x.insert(x.length(),temp);
-	// test 1001
+	//  1001
 	BinToHexa( x );
 	x.insert(x.length(),address);
 	toks.objectcode.insert(toks.objectcode.length(),x);
@@ -1471,11 +1813,11 @@ void sic_set_address( Packed_Token token_packer, Tokens toks, string &address ){
 
 bool sic_havefind( Packed_Token token_packer, Tokens toks, string token ){  
 	for ( int i = 0 ; i < token_packer.amount ; i++ ){
-		if ( token == token_packer.token_groups[i].label ) // 找得到
+		if ( token == token_packer.token_groups[i].label ) // 
 		  return true;
 	} // for
     return false;
-    // else 找不到
+    // 
 } // sic_havefind
 
 
@@ -1483,12 +1825,12 @@ void sic_setcode( Packed_Token token_packer, Tokens &toks ) {
 	string address;
 	string result;
 	int asciicode = 0 ;
-	if ( toks.x == 1 ) { //  index
+	if ( toks.flags.x ) { //  index
 	    if ( !toks.forwardreference ) {
-	        //cout << toks.ins << toks.group1 << toks.group2 << toks.objectcode ; // test
+	        //cout << toks.ins << toks.group1 << toks.group2 << toks.objectcode ; // 
 	    	sic_set_address(token_packer, toks, address);
 	    	sic_index_set_address( toks, address );
-	    	//cout << toks.ins << toks.objectcode << endl; // test
+	    	//cout << toks.ins << toks.objectcode << endl; // 
 		} // if
     } // if  index
     else if ( toks.c_x_w == "c" ) {
@@ -1514,7 +1856,7 @@ void sic_setcode( Packed_Token token_packer, Tokens &toks ) {
     	else
     	  toks.objectcode.insert(toks.objectcode.length(),hex);
 	} // else if
-	else if ( toks.x == 0 ) {
+	else if ( !toks.flags.x ) {
     	sic_set_address(token_packer, toks, address);
     	toks.objectcode.insert(toks.objectcode.length(),address);
     } // else if
@@ -1524,11 +1866,11 @@ void sic_pass2( Packed_Token &token_packer ){
 	for ( int i = 0 ; i < token_packer.amount ; i++ ) {
 		string address;
 		if ( token_packer.token_groups[i].forwardreference ) {
-			if ( token_packer.token_groups[i].x == 1 ) { //  index
+			if ( token_packer.token_groups[i].flags.x ) { //  index
 	          sic_set_address(token_packer, token_packer.token_groups[i], address);
 	    	  sic_index_set_address( token_packer.token_groups[i], address );
             } // if  index
-            else if ( token_packer.token_groups[i].x == 0 ) {
+            else if ( !token_packer.token_groups[i].flags.x ) {
     	      sic_set_address(token_packer, token_packer.token_groups[i], address);
     	      token_packer.token_groups[i].objectcode.insert(token_packer.token_groups[i].objectcode.length(),address);
             } // else if 
@@ -1536,20 +1878,19 @@ void sic_pass2( Packed_Token &token_packer ){
 	} // for
 } //sic_pass2
 
+// Pass-1 style handler: classify tokens on a single line,
+// capture labels/literals, and mark forward references.
 void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruction_Set sic[26] ) { 
-  //cout << toks.tokens[0].tokentype << toks.tokens[1].tokentype << toks.tokens[2].tokentype << endl ; // test
-  //cout << toks.tokens[0].tokenvalue << toks.tokens[1].tokenvalue << toks.tokens[2].tokenvalue <<endl ; // test
-  //cout << toks.tokens[0].value << toks.tokens[1].value << toks.tokens[2].value <<endl ; // test
-  if ( toks.tokens[0].tokentype == 5 ) { //有label 
+  if ( toks.tokens[0].type == TokenType::Label ) { // line starts with a label
   	toks.label = toks.tokens[0].value;
-  	if ( toks.tokens[1].tokentype == 1 ) { // 有label instructions
+  	if ( toks.tokens[1].type == TokenType::Instruction ) { // label followed by instruction
   	  toks.label_length = 3;
   	  toks.ins = toks.tokens[1].value;
   	  sic_Search_Instruction_Set( sic, toks.tokens[1].value, toks.objectcode );
-  	    if ( toks.tokens[3].tokentype == 4 && toks.tokens[3].tokenvalue == 1 ) { // <index>： <symbol>, X
+  	    if ( toks.tokens[3].type == TokenType::Delimiter && toks.tokens[3].tokenvalue == 1 ) { // indexed operand "<symbol>,X"
   	        if ( !sic_havefind( token_packer, toks, toks.tokens[2].value ) )
   	  	        toks.forwardreference = true;
-  	        toks.x = 1;
+  	        toks.flags.x = true;
   	        if ( toks.tokens[2].value.empty() )
   	            toks.error = "Syntax Error! : It's index mode.It should have something behind.";
   	        else
@@ -1558,9 +1899,9 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
   	            toks.error = "Syntax Error! : It's index mode.It should have something behind.";
   	        else
   	            toks.group2 = toks.tokens[4].value;
-  	    } // if <index>： <symbol>, X
-  	    else if ( toks.tokens[2].tokentype == 4 && toks.tokens[2].tokenvalue == 11 ) { // <literal>： (1)= C''…(BYTE) (2) = X''…(BYTE) (3) =常數 (WORD)
-  	        if ( toks.tokens[4].tokentype == 7 ) {  // (1)= C''…(BYTE) (C已經不見了 
+  	    } // indexed operand
+  	    else if ( toks.tokens[2].type == TokenType::Delimiter && toks.tokens[2].tokenvalue == 11 ) { // literal definition (=C'..', =X'..', =WORD)
+  	        if ( toks.tokens[4].type == TokenType::Literal ) {  // character literal
   	            toks.label_length = toks.tokens[4].value.length();
   	            toks.literal.c_x_w = "c";
   	            toks.literal.label = toks.tokens[4].value;
@@ -1570,8 +1911,8 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
                 toks.literal.literal.insert( 0, "C" );
                 toks.group1 = toks.tokens[4].value;
-			} // if (1)= X''…(BYTE) (X已經不見了  
-			else if ( toks.tokens[4].tokentype == 6 ) {  //  (2) = X''…(BYTE) (X已經不見了
+			} // C'..'
+			else if ( toks.tokens[4].type == TokenType::Number ) {  // hex literal
 			    toks.label_length = toks.tokens[4].value.length()/2;
 			    toks.literal.c_x_w = "x";
   	            toks.literal.label = toks.tokens[4].value;
@@ -1581,8 +1922,8 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
                 toks.literal.literal.insert( 0, "X" );
                 toks.group1 = toks.tokens[4].value;
-			} // else if  (2) = C''…(BYTE) (C已經不見了
-			else if ( toks.tokens[3].tokentype == 6 ) {  // (3) =常數 (WORD) 
+			} // X'..'
+			else if ( toks.tokens[3].type == TokenType::Number ) {  // =WORD decimal literal
 			    toks.label_length = 3;
 			    toks.literal.c_x_w = "w";
 			    toks.literal.label = toks.tokens[3].value;
@@ -1590,8 +1931,8 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
 			    toks.literal.WORDorBYTE = "WORD";
 			    toks.literal.literal = toks.tokens[3].value;
 			    toks.group1 = toks.literal.label;
-			} // else if (3) =常數 (WORD)
-  	    } // else if <literal>： (1)= C''…(BYTE) (2) = X''…(BYTE) (3) =常數 (WORD)
+			} // WORD literal
+  	    } // literal definition
   	    else if ( !toks.tokens[2].value.empty() && toks.tokens[3].value.empty() ) { // <symbol> | address
   	        if ( !sic_havefind( token_packer, toks, toks.tokens[2].value ) )
   	  	        toks.forwardreference = true;
@@ -1601,8 +1942,8 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
   	      toks.objectcode = "4C0000";
   	    else 
   	        toks.error = "Syntax Error! : It should be something here.";
-    } // if 有label instructions
-	else if ( toks.tokens[1].tokentype == 2 ) { // 有label pseudo instruction 1.START 2.END 3.EQU 4.BYTE 5.WORD 6.LTORG 7.BASE 8.RESB 9.RESW
+    } // 
+	else if ( toks.tokens[1].type == TokenType::Pseudo ) { // label followed by pseudo-instruction
 	  toks.ins = toks.tokens[1].value;
 	  if ( toks.tokens[1].tokenvalue == 1 ) {//  {label} START hex_num
 	    toks.pseudo = true;
@@ -1610,81 +1951,96 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
 	    toks.START = true;
 	    toks.group1 = toks.tokens[2].value;
 	    HexToDe( toks.tokens[2].value, num );
-	    toks.location = num;  //設定起始位置 
+	    toks.location = num;  // record starting address
       }// if START
-      else if ( toks.tokens[1].tokenvalue == 2 || toks.tokens[1].tokenvalue == 6 ) { //  {label} END {label} || {label} LTORG
+      else if ( toks.tokens[1].tokenvalue == 2 || toks.tokens[1].tokenvalue == 9 ) { //  END / LTORG
         toks.pseudo = true;
         toks.end =true;
         toks.group1 = toks.tokens[2].value;
 	    token_packer.end = true;
       } // else of
-      else if ( toks.tokens[1].tokenvalue == 3 ) {//  label EQU label | dec_num | *  四則運算限定於label與label
+      else if ( toks.tokens[1].tokenvalue == 7 ) {// EQU
         toks.EQU = true;
-        if ( toks.tokens[2].tokentype == 6 )
+        if ( toks.tokens[2].type == TokenType::Number )
           toks.location = atoi(toks.tokens[2].value.c_str());
         toks.group1 = toks.tokens[2].value;
       }// else if EQU
-      else if ( toks.tokens[1].tokenvalue == 4 ) {// {label} BYTE X''… | C''… | dec_num
-        if ( toks.tokens[3].tokentype == 7 ) {  // '(4,9) EOF(7,18) '(4,9) // C'…(BYTE) (C已經不見了
+      else if ( toks.tokens[1].tokenvalue == 3 ) {// BYTE directive
+        if ( toks.tokens[2].type == TokenType::Literal ) {  // char/hex literal in operand slot
+          toks.c_x_w = "c";
+          toks.label_length = toks.tokens[2].value.length();
+          toks.group1 = toks.tokens[2].value;
+        } // if
+        if ( toks.tokens[3].type == TokenType::Literal ) {  // char literal
           toks.c_x_w = "c";
           toks.label_length = toks.tokens[3].value.length();
-          toks.group1 = toks.tokens[3].value;  //直接把 EOF 一個一個翻成十六進位 
+          toks.group1 = toks.tokens[3].value;
 	    } // if
-	    else if ( toks.tokens[3].tokentype == 6 ) {  // '(4,9) F 1(6,51) '(4,9) // X''…(BYTE) (X已經不見了 
+	    else if ( toks.tokens[3].type == TokenType::Number ) {  // hex literal
 	      toks.c_x_w = "x";
 	      toks.label_length = toks.tokens[3].value.length()/2;
-	      toks.group1 = toks.tokens[3].value;  //直接放object code    
+	      toks.group1 = toks.tokens[3].value;
 		} // else if
-		else if ( toks.tokens[2].tokentype == 6 ) {  // dec_num
+		else if ( toks.tokens[2].type == TokenType::Number ) {  // hex literal without delimiter split
+		  toks.c_x_w = "x";
+		  toks.label_length = toks.tokens[2].value.length()/2;
+	      toks.group1 = toks.tokens[2].value; 
+		} // else if
+		else if ( toks.tokens[2].type == TokenType::Number ) {  // dec_num
 		  toks.label_length = 3;
 	      toks.group1 = toks.tokens[2].value; 
 		} // else if
       }// else if BYTE
-      else if ( toks.tokens[1].tokenvalue == 5 ) {//  {label} WORD X''… | C''… | dec_num
-        if ( toks.tokens[2].tokentype == 6 ) {  // dec_num
+      else if ( toks.tokens[1].tokenvalue == 4 ) {// WORD directive
+        if ( toks.tokens[2].type == TokenType::Literal ) {  // literal in operand slot
+          toks.c_x_w = "c";
+          toks.label_length = toks.tokens[2].value.length();
+          toks.group1 = toks.tokens[2].value;
+        } // if
+        if ( toks.tokens[2].type == TokenType::Number ) {  // dec_num
           toks.c_x_w = "w";
 		  toks.label_length = 3;
 	      toks.group1 = toks.tokens[2].value; 
 		} // if
-	    else if ( toks.tokens[3].tokentype == 6 ) {  // '(4,9) F 1(6,51) '(4,9) // X''…(WORD) (X已經不見了 
+	    else if ( toks.tokens[3].type == TokenType::Number ) {  // 
 	      toks.c_x_w = "x";
 	      toks.label_length = toks.tokens[3].value.length()/2;
-	      toks.group1 = toks.tokens[3].value;  //直接放object code  
+	      toks.group1 = toks.tokens[3].value;  // 
 		} // else if
-		else if ( toks.tokens[3].tokentype == 7 ) {  // '(4,9) EOF(7,18) '(4,9) // C'…(WORD) (C已經不見了
+		else if ( toks.tokens[3].type == TokenType::Literal ) {  // 
 		  toks.c_x_w = "c";
 	      toks.label_length = toks.tokens[3].value.length();
-          toks.group1 = toks.tokens[3].value;  //直接把 EOF 一個一個翻成十六進位 
+          toks.group1 = toks.tokens[3].value;  // 
 	    } // else if
       }// else if WORD
-      else if ( toks.tokens[1].tokenvalue == 7 ) {//  {label} BASE dec_num | symbol
+      else if ( toks.tokens[1].tokenvalue == 8 ) {//  BASE dec_num | symbol
         toks.pseudo = true;
         token_packer.base = true;
         toks.group1 = toks.tokens[2].value; 
       }// else if BASE
-      else if ( toks.tokens[1].tokenvalue == 8 ) {//  {label} RESB dec_num
+      else if ( toks.tokens[1].tokenvalue == 5 ) {//  {label} RESB dec_num
         toks.pseudo = true;
         toks.label_length = atoi(toks.tokens[2].value.c_str());
         toks.group1 = toks.tokens[2].value;
       }// else if RESB
-      else if ( toks.tokens[1].tokenvalue == 9 ) {//  {label} RESW dec_num
+      else if ( toks.tokens[1].tokenvalue == 6 ) {//  {label} RESW dec_num
         toks.pseudo = true;
         toks.label_length = atoi(toks.tokens[2].value.c_str())*3;
-        //cout << toks.label_length ; // test
+        //cout << toks.label_length ; // 
         toks.group1 = toks.tokens[2].value;
       }// else if RESW
 	} // else if  pseudo instruction
-	else if ( toks.tokens[0].tokentype == 5 && toks.tokens[1].tokentype != 1 && toks.tokens[1].tokentype != 2 )
+	else if ( toks.tokens[0].type == TokenType::Label && toks.tokens[1].type != TokenType::Instruction && toks.tokens[1].type != TokenType::Pseudo )
       toks.error = "Syntax Error! : It doesn't have instructions.";
-  } // if 有label 
-  else if ( toks.tokens[0].tokentype == 1 ) {  //沒有label  instrunctions
+  } // 
+  else if ( toks.tokens[0].type == TokenType::Instruction ) {  // 
     toks.label_length = 3;
   	toks.ins = toks.tokens[0].value;
   	sic_Search_Instruction_Set( sic, toks.tokens[0].value, toks.objectcode );
-  	    if ( toks.tokens[2].tokentype == 4 && toks.tokens[2].tokenvalue == 1 ) { // <index>： <symbol>, X
+  	    if ( toks.tokens[2].type == TokenType::Delimiter && toks.tokens[2].tokenvalue == 1 ) { // 
   	        if ( !sic_havefind( token_packer, toks, toks.tokens[1].value ) )
   	  	        toks.forwardreference = true;
-  	        toks.x = 1;
+  	        toks.flags.x = true;
   	        if ( toks.tokens[1].value.empty() )
   	            toks.error = "Syntax Error! : It's index mode.It should have something behind.";
   	        else
@@ -1693,9 +2049,9 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
   	            toks.error = "Syntax Error! : It's index mode.It should have something behind.";
   	        else
   	            toks.group2 = toks.tokens[3].value;
-  	    } // if <index>： <symbol>, X
-  	    else if ( toks.tokens[1].tokentype == 4 && toks.tokens[1].tokenvalue == 11 ) { // <literal>： (1)= C''…(BYTE) (2) = X''…(BYTE) (3) =常數 (WORD)
-  	        if ( toks.tokens[3].tokentype == 7 ) {  // (1)= C''…(BYTE) (C已經不見了 
+  	    } // 
+  	    else if ( toks.tokens[1].type == TokenType::Delimiter && toks.tokens[1].tokenvalue == 11 ) { // 
+  	        if ( toks.tokens[3].type == TokenType::Literal ) {  // 
   	            toks.label_length = toks.tokens[3].value.length();
   	            toks.literal.c_x_w = "c";
   	            toks.literal.label = toks.tokens[3].value;
@@ -1705,8 +2061,8 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[2].value );
                 toks.literal.literal.insert( 0, "C" );
                 toks.group1 = toks.tokens[3].value;
-			} // if (1)= X''…(BYTE) (X已經不見了  
-			else if ( toks.tokens[3].tokentype == 6 ) {  //  (2) = X''…(BYTE) (X已經不見了
+			} // 
+			else if ( toks.tokens[3].type == TokenType::Number ) {  // 
 			    toks.label_length = toks.tokens[3].value.length()/2;
 			    toks.literal.c_x_w = "x";
   	            toks.literal.label = toks.tokens[3].value;
@@ -1716,8 +2072,8 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[2].value );
                 toks.literal.literal.insert( 0, "X" );
                 toks.group1 = toks.tokens[3].value;
-			} // else if  (2) = C''…(BYTE) (C已經不見了
-			else if ( toks.tokens[2].tokentype == 6 ) {  // (3) =常數 (WORD) 
+			} // 
+			else if ( toks.tokens[2].type == TokenType::Number ) {  // 
 			    toks.label_length = 3;
 			    toks.literal.c_x_w = "w";
 			    toks.literal.label = toks.tokens[2].value;
@@ -1725,8 +2081,8 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
 			    toks.literal.WORDorBYTE = "WORD";
 			    toks.literal.literal = toks.tokens[2].value;
 			    toks.group1 = toks.literal.label;
-			} // else if (3) =常數 (WORD)
-  	    } // else if <literal>： (1)= C''…(BYTE) (2) = X''…(BYTE) (3) =常數 (WORD)
+			} // 
+  	    } // 
   	    else if ( !toks.tokens[1].value.empty() && toks.tokens[2].value.empty() ) { // <symbol> | address
   	        if ( !sic_havefind( token_packer, toks, toks.tokens[1].value ) )
   	  	        toks.forwardreference = true;
@@ -1736,8 +2092,8 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
   	      toks.objectcode = "4C0000";
   	    else 
   	        toks.error = "Syntax Error! : It should be something here.";
-    } // else if 沒有label  instrunctions
-    else if ( toks.tokens[0].tokentype == 2 ) {  //沒有label pseudo instruction
+    } // 
+    else if ( toks.tokens[0].type == TokenType::Pseudo ) {  // 
 	    toks.ins = toks.tokens[0].value;
 	    if ( toks.tokens[0].tokenvalue == 1 ) {//  {label} START hex_num
 	      toks.pseudo = true;
@@ -1745,69 +2101,69 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
 	      toks.START = true;
 	      toks.group1 = toks.tokens[1].value;
 	      HexToDe( toks.tokens[2].value, num );
-	      toks.location = num;  //設定起始位置 
+	      toks.location = num;  // 
         }// if START
-        else if ( toks.tokens[0].tokenvalue == 2 || toks.tokens[0].tokenvalue == 6 ) {//  {label} END {label} || {label} LTORG
+        else if ( toks.tokens[0].tokenvalue == 2 || toks.tokens[0].tokenvalue == 9 ) {//  END or LTORG without label
           toks.pseudo = true;
           toks.end =true;
           toks.group1 = toks.tokens[1].value;
 	      token_packer.end = true;
 	    }// else if {label} END {label} || {label} LTORG
-        else if ( toks.tokens[0].tokenvalue == 3 ) { //  label EQU label | dec_num | *  四則運算限定於label與label
+        else if ( toks.tokens[0].tokenvalue == 7 ) { // EQU
           toks.EQU = true;
-          if ( toks.tokens[1].tokentype == 6 )
+          if ( toks.tokens[1].type == TokenType::Number )
             toks.location = atoi(toks.tokens[1].value.c_str());
           toks.group1 = toks.tokens[1].value;
-        }// else if label EQU label | dec_num | *  四則運算限定於label與label
-        else if ( toks.tokens[0].tokenvalue == 4 ) {// {label} BYTE X''… | C''… | dec_num
-          if ( toks.tokens[1].tokentype == 6 ) {  // dec_num
+        }// 
+        else if ( toks.tokens[0].tokenvalue == 3 ) {// BYTE
+          if ( toks.tokens[1].type == TokenType::Number ) {  // dec_num
 		    toks.label_length = 3;
 	        toks.group1 = toks.tokens[1].value; 
 		  } // if
-          else if ( toks.tokens[2].tokentype == 7 ) {  // '(4,9) EOF(7,18) '(4,9) // C'…(BYTE) (C已經不見了
+          else if ( toks.tokens[2].type == TokenType::Literal ) {  // 
             toks.c_x_w = "c";
             toks.label_length = toks.tokens[2].value.length();
-            toks.group1 = toks.tokens[2].value;  //直接把 EOF 一個一個翻成十六進位 
+            toks.group1 = toks.tokens[2].value;  // 
 	      } // else if
-	      else if ( toks.tokens[2].tokentype == 6 ) {  // '(4,9) F 1(6,51) '(4,9) // X''…(BYTE) (X已經不見了 
+	      else if ( toks.tokens[2].type == TokenType::Number ) {  // 
 	        toks.c_x_w = "x";
 	        toks.label_length = toks.tokens[2].value.length()/2;
-	        toks.group1 = toks.tokens[2].value;  //直接放object code    
+	        toks.group1 = toks.tokens[2].value;  // 
 	  	  } // else if
         }// else if BYTE
-        else if ( toks.tokens[0].tokenvalue == 5 ) {//  {label} WORD X''… | C''… | dec_num
-	      if ( toks.tokens[2].tokentype == 7 ) {  // '(4,9) EOF(7,18) '(4,9) // C'…(WORD) (C已經不見了
+        else if ( toks.tokens[0].tokenvalue == 4 ) {// WORD
+	      if ( toks.tokens[2].type == TokenType::Literal ) {  // 
 	        toks.c_x_w = "c";
 	        toks.label_length = toks.tokens[2].value.length();
-            toks.group1 = toks.tokens[2].value;  //直接把 EOF 一個一個翻成十六進位 
+            toks.group1 = toks.tokens[2].value;  // 
 	      } // if
-	      else if ( toks.tokens[2].tokentype == 6 ) {  // '(4,9) F 1(6,51) '(4,9) // X''…(WORD) (X已經不見了 
+	      else if ( toks.tokens[2].type == TokenType::Number ) {  // 
 	        toks.c_x_w = "x";
 	        toks.label_length = toks.tokens[2].value.length()/2;
-	        toks.group1 = toks.tokens[2].value;  //直接放object code    
+	        toks.group1 = toks.tokens[2].value;  // 
 	  	  } // else if
-		  else if ( toks.tokens[1].tokentype == 6 ) {  // dec_num
+		  else if ( toks.tokens[1].type == TokenType::Number ) {  // dec_num
 		    toks.c_x_w = "w";
 		    toks.label_length = 3;
 	        toks.group1 = toks.tokens[1].value; 
 		  } // else if
         }// else if WORD
-        else if ( toks.tokens[0].tokenvalue == 7 ) {//  {label} BASE dec_num | symbol
+        else if ( toks.tokens[0].tokenvalue == 8 ) {// BASE
           token_packer.base = true;
           toks.group1 = toks.tokens[1].value; 
         }// else if BASE
-        else if ( toks.tokens[0].tokenvalue == 8 ) {//  {label} RESB dec_num
+        else if ( toks.tokens[0].tokenvalue == 5 ) {// RESB
           toks.pseudo = true;
           toks.label_length = atoi(toks.tokens[1].value.c_str());
           toks.group1 = toks.tokens[1].value;
         }// else if RESB
-        else if ( toks.tokens[0].tokenvalue == 9 ) {//  {label} RESW dec_num
+        else if ( toks.tokens[0].tokenvalue == 6 ) {// RESW
           toks.pseudo = true;
           toks.label_length = atoi(toks.tokens[1].value.c_str())*3;
           toks.group1 = toks.tokens[1].value;
         }// else if RESW
-    } // else if 沒有label pseudo instruction
-    else if ( toks.tokens[0].tokentype != 5 && toks.tokens[0].tokentype != 1 && toks.tokens[0].tokentype != 2 )
+    } // 
+    else if ( toks.tokens[0].type != TokenType::Label && toks.tokens[0].type != TokenType::Instruction && toks.tokens[0].type != TokenType::Pseudo )
       toks.error = "Syntax Error! : It doesn't have label and instructions.";
 } // sic_RecordAndSyntax
 
@@ -1815,351 +2171,228 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
 
 
 
-void sic () {
-	Sic_Instruction_Set sic[26];  //放sic的指令表 
+void sic ( const string &inputPath, const string &outputPath ) {
+	Sic_Instruction_Set sic[26];  // 
 	Sic_Instruction_input( sic );
-	//Sic_Instruction_print( sic ); // test
-	Table table1[59];  //放table1  59個元素     Instruction
-	Table table2[9];  //放table2  9個元素       Pseudo and Extra 我增加了EQU LTORG BASE
-	Table table3[9];  //放table3  9個元素       Register
-	Table table4[13];  //放table4  13個元素     Delimiter
-	Table table5[100];  //放table5  100個元素   Symbol
-	Table table6[100];  //放table6  100個元素   Integer/Real
-	Table table7[100];  //放table7  100個元素   String , table4 );
-	Packed_Token token_packer; //放一行一行包裝好的Tokens
+	//Sic_Instruction_print( sic ); // 
+	Table table1[59];  // 
+	Table table2[9];  // 
+	Table table3[9];  // 
+	Table table4[13];  // 
+	SymbolTable table5;  // 
+	SymbolTable table6;  // 
+	SymbolTable table7;  // 
+	Packed_Token token_packer; // 
 	token_packer.amount = 0;
-	tableinput( table1, table2, table3, table4 );
+	loadOpcodeTables( table1, table2, table3, table4 );
     ifstream newfile; 
     ofstream outfile;
-    string demo("SIC_input.txt");  //先寫一個字串demo 
-	newfile.open(demo.c_str()); //開啟檔案
-	demo.replace(demo.find("input"), 5, "output");
-	outfile.open(demo.c_str()); //寫入檔案
+	if ( !openInputFile(newfile, inputPath) )
+		return;
+	if ( !openOutputFile(outfile, outputPath) ) {
+		newfile.close();
+		return;
+	}
 	string line;
-	string token;
-	int tokentype = 0;
-	int tokenvalue = 0;
-	int is_string = 0; // C'EOF'代表EOF字串
-	int is_integer = 0; // X'F1'代表16進位的F1
+	int locationCounter = 0;
+	bool hasLocation = false;
 	while ( getline(newfile, line) ) {
-	  if ( !line.empty() )
+	  if ( !line.empty() && line.back() == '\r' )
+	    line.pop_back(); // trim Windows newline
+	  if ( isBlankLine(line) )
+	    continue;
+	  Tokens blank{};
+	  token_packer.token_groups[token_packer.amount] = blank;
+	  if ( !line.empty() ) {
 	    if ( token_packer.amount != 0 )
 	      token_packer.token_groups[token_packer.amount].line =  token_packer.token_groups[token_packer.amount-1].line + 5;
 	    else 
 	      token_packer.token_groups[token_packer.amount].line = 5;
-	  token_packer.token_groups[token_packer.amount].sourcestatement = line ;  //每行的存原始程式 
-	  if ( token_packer.token_groups[token_packer.amount].sourcestatement[0] == '\t' )
+	  }
+	  token_packer.token_groups[token_packer.amount].sourcestatement = line ;  // 
+	  if ( !token_packer.token_groups[token_packer.amount].sourcestatement.empty() &&
+	       token_packer.token_groups[token_packer.amount].sourcestatement[0] == '\t' )
 	    token_packer.token_groups[token_packer.amount].sourcestatement.erase( 0, 1 );
-	  if ( token_packer.longestnum < line.length() ) //紀錄最長的source 
+	  if ( token_packer.longestnum < line.length() ) // 
 	    token_packer.longestnum = line.length();
-	  //cout << line << endl ; // test
-	  token_packer.token_groups[token_packer.amount].amount = 0;  //每行的token從頭開始算要歸零 
-	  is_string = 0;
-	  is_integer = 0;
-	  for ( int a = 0; a < line.length() ; a++ ) { 
-	  	if ( line[a] == '.' ) { 
-	  	  token_packer.token_groups[token_packer.amount].comment = true;
-	  	  break;
-	  	} // if 
-	  	token.append(1, line[a]);
-	  	if ( is_string != 1 && is_integer != 1 ) {
-	  	  while ( !iswhitespce( line[a] ) && !isOp( line[a] ) && a+1 < line.length() ){ //取得token 
-            a++;
-	  		token.append(1, line[a]);
-	  		//cout << endl << token ; // test
-	  		int end = a+1;
-	  		if ( end >= line.length() )
-	  		  break;
-		  } //while
-		} // if
-		else if ( is_string == 1 || is_integer == 1 ) {
-		  while ( int(line[a+1]) != 39 ){ //string或integer取得token 
-            a++;
-	  		token.append(1, line[a]);
-		  } //while
-		} // if else
-		
-		//cout << endl << token ; // test
-		if ( int(line[a]) == 39 && (int(line[a-1]) == 99 || int(line[a-1]) == 67) ) { // C'EOF'代表EOF字串
-		  token.erase(0,1);
-		  is_string ++;
-	    } // if
-	    if ( int(line[a]) == 39 && (int(line[a-1]) == 120 || int(line[a-1]) == 88) ) { // X'F1'代表16進位的F1
-	      token.erase(0,1);
-		  is_integer ++;
-	    } // if
-	    
-	    if ( iswhitespce( line[a] ) )
-	       removewhitespace( token ); //先移除whitespce 
-	    
-	    if ( isOp( line[a] ) && is_string != 1 && is_integer != 1 && token.length() != 1 ) {  //兩個token 取得前面那個token然後倒退後面那個 delimiter 下一個在做 
-			token.erase(token.length()-1, 1); //刪掉後面那個 delimiter
-			if ( find( token, table1, table2, table3, table4, 
-              table5, table6, table7, tokentype, tokenvalue ) ) { //能在table裡找到 
-              ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue);
-		    } // if 
-		    else if ( !find( token, table1, table2, table3, table4, 
-              table5, table6, table7, tokentype, tokenvalue ) ) { // 在table找不到，自己建 
-              string upper = to_upper(token); 
-		      if ( isNumber( upper ) ) {  //判斷是否為table6:數字
-		        tokentype = 6;
-		        instable( upper, table6, tokentype, tokenvalue);  
-		      } // if
-		      else {  //判斷是否為table5
-		        tokentype = 5;
-		        instable( upper, table5, tokentype, tokenvalue);
-		      } // else
-		      ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue);
-		    } //else  if 
-			a--; //倒退 
-		}//if 
-		else if ( isOp( line[a] ) && token.length() == 1 ) {  //一個token delimiter 
-		  if ( find( token, table1, table2, table3, table4, 
-            table5, table6, table7, tokentype, tokenvalue ) ) { //能在table裡找到 
-            ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue);
-		  } // if 
-		}//else  if 
-		else if ( is_string == 1 && !isOp( line[a] )  ) {  //是str !isOp( line[a] ) ->避免是' 
-          tokentype = 7;
-		  instable( token, table7, tokentype, tokenvalue);
-		  ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue);
-		  is_string ++;
-		}//else  if
-		else if ( is_integer == 1 && !isOp( line[a] )  ) {  //是integer  !isOp( line[a] ) ->避免是'
-          string upper = to_upper(token); 
-          tokentype = 6;
-		  instable( upper, table6, tokentype, tokenvalue);
-		  ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue); 
-		  is_integer ++;
-		}//else  if
-		else if ( !onespace( token ) && !token.empty() ){ 
-		  if ( find( token, table1, table2, table3, table4, 
-            table5, table6, table7, tokentype, tokenvalue ) ) { //能在table裡找到 
-            ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue);
-		  } // if 
-		  else if ( !find( token, table1, table2, table3, table4, 
-            table5, table6, table7, tokentype, tokenvalue ) ) { // 在table找不到，自己建 
-		    if ( is_integer == 1 ) { //判斷是否為table7:literal('字串') 
-		      tokentype = 7;
-		      instable( token, table7, tokentype, tokenvalue);
-	     	} // if
-		    else if ( isNumber( token ) ) { //判斷是否為table6:數字
-		      string upper = to_upper(token); 
-		      tokentype = 6;
-		      instable( upper, table6, tokentype, tokenvalue); 
-		    } // else if
-		    else {  //判斷是否為table5
-		      string upper = to_upper(token); 
-		      tokentype = 5;
-		      instable( upper, table5, tokentype, tokenvalue); 
-		    } // else
-		    ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue);
-		  } //else  if 
-		} // else  if	
-	    token.clear();
-	  } // for 
+	  //cout << line << endl ; // 
+	  token_packer.token_groups[token_packer.amount].amount = 0;  // 
+	  token_packer.token_groups[token_packer.amount].comment = false;
+      bool parsedAsComment = false;
+      string tokenError;
+      vector<Token> parsedTokens = tokenizeLine(
+          line, table1, table2, table3, table4,
+          table5, table6, table7, parsedAsComment, tokenError);
+      token_packer.token_groups[token_packer.amount].comment = parsedAsComment;
+      if ( !tokenError.empty() ) {
+        token_packer.token_groups[token_packer.amount].error = tokenError;
+        token_packer.amount++;
+        continue;
+      }
+      if ( !parsedAsComment ) {
+        for ( const auto &parsedToken : parsedTokens ) {
+          ins_packer(token_packer.token_groups[token_packer.amount],
+                    parsedToken.value, parsedToken.type, parsedToken.tokenvalue);
+        }
+      }
 	  if ( !token_packer.token_groups[token_packer.amount].sourcestatement.empty() && !token_packer.token_groups[token_packer.amount].comment )
-	    sic_RecordAndSyntax( token_packer, token_packer.token_groups[token_packer.amount], sic ) ; // 紀錄一行一行的label ins group1 group2/ 紀錄nixpb和是否forward reference
-	  int temp = token_packer.amount-1; //上一個 
-	  if ( temp != -1 )
-	    while ( token_packer.token_groups[temp].EQU )
-	      temp--;
-	  if ( temp != -1 && !token_packer.token_groups[token_packer.amount].EQU && !token_packer.token_groups[token_packer.amount].START )
-	    token_packer.token_groups[token_packer.amount].location = token_packer.token_groups[temp].location + token_packer.token_groups[temp].label_length;
+	    sic_RecordAndSyntax( token_packer, token_packer.token_groups[token_packer.amount], sic ) ; // 
+	  Tokens &current = token_packer.token_groups[token_packer.amount];
+	  if ( current.START ) {
+	    int startAddr = 0;
+	    if ( parseHexNumber(current.tokens[2].value, startAddr) ) {
+	      current.location = startAddr;
+	      locationCounter = startAddr;
+	      hasLocation = true;
+	    }
+	  }
+	  else {
+	    if ( !hasLocation )
+	      hasLocation = true;
+	    if ( current.EQU ) {
+	      // location already set by EQU expression; do not advance counter
+	    }
+	    else {
+	      current.location = locationCounter;
+	      locationCounter += current.label_length;
+	    }
+	  }
 	  sic_setlocation ( token_packer.token_groups[token_packer.amount].location, token_packer.token_groups[token_packer.amount].hex_location );
 	  sic_setline( token_packer.token_groups[token_packer.amount].setedline, token_packer.token_groups[token_packer.amount].line ) ;
 	  if ( token_packer.token_groups[token_packer.amount].ins != "RSUB" )
 	    sic_setcode( token_packer, token_packer.token_groups[token_packer.amount] );
-	  //cout << token_packer.token_groups[token_packer.amount].ins << token_packer.token_groups[token_packer.amount].hex_location << endl ; // test
+	  //cout << token_packer.token_groups[token_packer.amount].ins << token_packer.token_groups[token_packer.amount].hex_location << endl ; // 
 	  token_packer.amount++;
 	} // while
 	sic_pass2(token_packer);
-	newfile.close();//讀檔完後關閉檔案
-	outfile << "Line" << "  " << "Location" << "  " ;
-	outfile << "Source code" ;
-	for ( int i = 10 ; i < 50 ; i++ )
-	  outfile << " ";
-	outfile << "  ";
-	outfile << "Object code" << endl ;
-	for ( int b = 0 ; b < token_packer.amount; b++) { //TEST
-	    if( token_packer.token_groups[b].sourcestatement.empty() )
-	      outfile << endl ;
-	    else {
-	      outfile << token_packer.token_groups[b].setedline << "  ";
-	      if ( token_packer.token_groups[b].error.empty() ) {
-	      	if ( token_packer.token_groups[b].end || token_packer.token_groups[b].comment )
-	        outfile << "          ";
-	        else
-	          outfile << token_packer.token_groups[b].hex_location << "      ";
-	        if ( token_packer.token_groups[b].label.empty() && !token_packer.token_groups[b].comment )
-	          outfile << "        ";
-		    outfile << token_packer.token_groups[b].sourcestatement << "  ";
-		    for ( int i = token_packer.token_groups[b].sourcestatement.length() ; i < 50 ; i++ )
-	          outfile << " ";
-	        //cout << token_packer.token_groups[b].ins << token_packer.token_groups[b].objectcode << endl ; // test
-	        if ( !token_packer.token_groups[b].pseudo && !token_packer.token_groups[b].comment )
-		      outfile << token_packer.token_groups[b].objectcode;
-		    //outfile <<  getpacker( token_packer.token_groups[b]) ; //寫入檔案 //TEST
-		    outfile << endl;
-		  } // if
-		  else
-		    outfile << token_packer.token_groups[b].error << endl;
-		} // else
+	newfile.close();//Close file after reading
+	outfile << "Line\tLoc\tSource statement\t\tObject code\r\n\r\n";
+	for ( int b = 0 ; b < token_packer.amount; b++) { //
+	    const auto &tg = token_packer.token_groups[b];
+	    if( tg.sourcestatement.empty() ) {
+	      outfile << "\r\n" ;
+	      continue;
+	    }
+	    if ( !tg.error.empty() ) {
+	      outfile << tg.error << "\r\n";
+	      continue;
+	    }
+	    outfile << tg.setedline << "\t";
+	    if ( tg.comment ) {
+	      outfile << "\t" << tg.sourcestatement << "\r\n";
+	      continue;
+	    }
+	    if ( tg.end ) {
+	      outfile << "\t\t" << tg.sourcestatement << "\r\n";
+	      continue;
+	    }
+	    outfile << tg.hex_location << "\t";
+	    if ( tg.label.empty() )
+	      outfile << "\t"; // align when no label
+	    outfile << tg.sourcestatement;
+	    if ( !tg.pseudo && !tg.objectcode.empty() ) {
+	      string spacer;
+	      if ( tg.group1.empty() && tg.group2.empty() )
+	        spacer = "\t\t\t";
+	      else if ( tg.sourcestatement.find(',') != string::npos )
+	        spacer = "\t";
+	      else
+	        spacer = "\t\t";
+	      outfile << spacer << tg.objectcode;
+	      if ( tg.ins == "J" )
+	        outfile << " ";
+	    }
+	    outfile << "\r\n";
 	} // for
-	outfile.close();//寫檔完後關閉檔案 
+	outfile << "\r\n";
+	outfile.close();//Close output file 
 } // sic
 
-void sicxe () {
-	Sicxe_Instruction_Set sicxe[59];  //放sicxe的指令表 
+void sicxe ( const string &inputPath, const string &outputPath ) {
+	Sicxe_Instruction_Set sicxe[59];  // 
 	Sicxe_Instruction_input( sicxe );
-	Table table1[59];  //放table1  59個元素     Instruction
-	Table table2[9];  //放table2  9個元素       Pseudo and Extra 我增加了EQU LTORG BASE
-	Table table3[9];  //放table3  9個元素       Register
-	Table table4[13];  //放table4  13個元素     Delimiter
-	Table table5[100];  //放table5  100個元素   Symbol
-	Table table6[100];  //放table6  100個元素   Integer/Real
-	Table table7[100];  //放table7  100個元素   String , table4 );
-	Packed_Token token_packer; //放一行一行包裝好的Tokens
+	Table table1[59];  // 
+	Table table2[9];  // 
+	Table table3[9];  // 
+	Table table4[13];  // 
+	SymbolTable table5;  // 
+	SymbolTable table6;  // 
+	SymbolTable table7;  // 
+	Packed_Token token_packer; // 
 	token_packer.amount = 0;
-	tableinput( table1, table2, table3, table4 );
+	loadOpcodeTables( table1, table2, table3, table4 );
     ifstream newfile; 
     ofstream outfile;
-    string demo("SICXE_input.txt");  //先寫一個字串demo 
-	newfile.open(demo.c_str()); //開啟檔案
-	demo.replace(demo.find("input"), 5, "output");
-	outfile.open(demo.c_str()); //寫入檔案
+	if ( !openInputFile(newfile, inputPath) )
+		return;
+	if ( !openOutputFile(outfile, outputPath) ) {
+		newfile.close();
+		return;
+	}
 	string line;
-	string token;
-	int tokentype = 0;
-	int tokenvalue = 0;
-	int is_string = 0; // C'EOF'代表EOF字串
-	int is_integer = 0; // X'F1'代表16進位的F1
+	int locationCounter = 0;
+	bool hasLocation = false;
 	while ( getline(newfile, line) ) {
-		//cout << line << endl ; // test
-	  if ( !line.empty() )
+		//cout << line << endl ; // 
+	  if ( !line.empty() && line.back() == '\r' )
+	    line.pop_back(); // trim Windows newline
+	  if ( isBlankLine(line) )
+	    continue;
+	  Tokens blank{};
+	  token_packer.token_groups[token_packer.amount] = blank;
+	  if ( !line.empty() ) {
 	    if ( token_packer.amount != 0 )
 	      token_packer.token_groups[token_packer.amount].line =  token_packer.token_groups[token_packer.amount-1].line + 5;
 	    else 
 	      token_packer.token_groups[token_packer.amount].line = 5;
-	  token_packer.token_groups[token_packer.amount].sourcestatement = line ;  //每行的存原始程式 
-	  if ( token_packer.token_groups[token_packer.amount].sourcestatement[0] == '\t' )
+	  }
+	  token_packer.token_groups[token_packer.amount].sourcestatement = line ;  // 
+	  if ( !token_packer.token_groups[token_packer.amount].sourcestatement.empty() &&
+	       token_packer.token_groups[token_packer.amount].sourcestatement[0] == '\t' )
 	    token_packer.token_groups[token_packer.amount].sourcestatement.erase( 0, 1 );
-	  if ( token_packer.longestnum < line.length() ) //紀錄最長的source 
+	  if ( token_packer.longestnum < line.length() ) // 
 	    token_packer.longestnum = line.length();
-	  //cout << line << endl ; // test
-	  token_packer.token_groups[token_packer.amount].amount = 0;  //每行的token從頭開始算要歸零 
-	  is_string = 0;
-	  is_integer = 0;
-	  for ( int a = 0; a < line.length() ; a++ ) { 
-	  	if ( line[a] == '.' ) { 
-	  	  token_packer.token_groups[token_packer.amount].comment = true;
-	  	  break;
-	  	} // if 
-	  	token.append(1, line[a]);
-	  	if ( is_string != 1 && is_integer != 1 ) {
-	  	  while ( !iswhitespce( line[a] ) && !isOp( line[a] ) && a+1 < line.length() ){ //取得token 
-            a++;
-	  		token.append(1, line[a]);
-	  		//cout << endl << token ; // test
-	  		int end = a+1;
-	  		if ( end >= line.length() )
-	  		  break;
-		  } //while
-		} // if
-		else if ( is_string == 1 || is_integer == 1 ) {
-		  while ( int(line[a+1]) != 39 ){ //string或integer取得token 
-            a++;
-	  		token.append(1, line[a]);
-		  } //while
-		} // if else
-		
-		//cout << endl << token ; // test
-		if ( int(line[a]) == 39 && (int(line[a-1]) == 99 || int(line[a-1]) == 67) ) { // C'EOF'代表EOF字串
-		  token.erase(0,1);
-		  is_string ++;
-	    } // if
-	    if ( int(line[a]) == 39 && (int(line[a-1]) == 120 || int(line[a-1]) == 88) ) { // X'F1'代表16進位的F1
-	      token.erase(0,1);
-		  is_integer ++;
-	    } // if
-	    
-	    if ( iswhitespce( line[a] ) )
-	       removewhitespace( token ); //先移除whitespce 
-	    
-	    if ( isOp( line[a] ) && is_string != 1 && is_integer != 1 && token.length() != 1 ) {  //兩個token 取得前面那個token然後倒退後面那個 delimiter 下一個在做 
-			token.erase(token.length()-1, 1); //刪掉後面那個 delimiter
-			if ( find( token, table1, table2, table3, table4, 
-              table5, table6, table7, tokentype, tokenvalue ) ) { //能在table裡找到 
-              ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue);
-		    } // if 
-		    else if ( !find( token, table1, table2, table3, table4, 
-              table5, table6, table7, tokentype, tokenvalue ) ) { // 在table找不到，自己建 
-              string upper = to_upper(token); 
-		      if ( isNumber( upper ) ) {  //判斷是否為table6:數字
-		        tokentype = 6;
-		        instable( upper, table6, tokentype, tokenvalue);  
-		      } // if
-		      else {  //判斷是否為table5
-		        tokentype = 5;
-		        instable( upper, table5, tokentype, tokenvalue);
-		      } // else
-		      ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue);
-		    } //else  if 
-			a--; //倒退 
-		}//if 
-		else if ( isOp( line[a] ) && token.length() == 1 ) {  //一個token delimiter 
-		  if ( find( token, table1, table2, table3, table4, 
-            table5, table6, table7, tokentype, tokenvalue ) ) { //能在table裡找到 
-            ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue);
-		  } // if 
-		}//else  if 
-		else if ( is_string == 1 && !isOp( line[a] )  ) {  //是str !isOp( line[a] ) ->避免是' 
-          tokentype = 7;
-		  instable( token, table7, tokentype, tokenvalue);
-		  ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue);
-		  is_string ++;
-		}//else  if
-		else if ( is_integer == 1 && !isOp( line[a] )  ) {  //是integer  !isOp( line[a] ) ->避免是'
-          string upper = to_upper(token); 
-          tokentype = 6;
-		  instable( upper, table6, tokentype, tokenvalue);
-		  ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue); 
-		  is_integer ++;
-		}//else  if
-		else if ( !onespace( token ) && !token.empty() ){ 
-		  if ( find( token, table1, table2, table3, table4, 
-            table5, table6, table7, tokentype, tokenvalue ) ) { //能在table裡找到 
-            ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue);
-		  } // if 
-		  else if ( !find( token, table1, table2, table3, table4, 
-            table5, table6, table7, tokentype, tokenvalue ) ) { // 在table找不到，自己建 
-		    if ( is_integer == 1 ) { //判斷是否為table7:literal('字串') 
-		      tokentype = 7;
-		      instable( token, table7, tokentype, tokenvalue);
-	     	} // if
-		    else if ( isNumber( token ) ) { //判斷是否為table6:數字或結尾為H
-		      string upper = to_upper(token); 
-		      tokentype = 6;
-		      instable( upper, table6, tokentype, tokenvalue); 
-		    } // else if
-		    else {  //判斷是否為table5
-		      string upper = to_upper(token); 
-		      tokentype = 5;
-		      instable( upper, table5, tokentype, tokenvalue); 
-		    } // else
-		    ins_packer(token_packer.token_groups[token_packer.amount], token, tokentype, tokenvalue);
-		  } //else  if 
-		} // else  if	
-	    token.clear();
-	  } // for 
+	  //cout << line << endl ; // 
+	  token_packer.token_groups[token_packer.amount].amount = 0;  // 
+	  token_packer.token_groups[token_packer.amount].comment = false;
+      bool parsedAsComment = false;
+      string tokenError;
+      vector<Token> parsedTokens = tokenizeLine(
+          line, table1, table2, table3, table4,
+          table5, table6, table7, parsedAsComment, tokenError);
+      token_packer.token_groups[token_packer.amount].comment = parsedAsComment;
+      if ( !tokenError.empty() ) {
+        token_packer.token_groups[token_packer.amount].error = tokenError;
+        token_packer.amount++;
+        continue;
+      }
+      if ( !parsedAsComment ) {
+        for ( const auto &parsedToken : parsedTokens ) {
+          ins_packer(token_packer.token_groups[token_packer.amount],
+                    parsedToken.value, parsedToken.type, parsedToken.tokenvalue);
+        }
+	  }
 	  if ( !token_packer.token_groups[token_packer.amount].sourcestatement.empty() && !token_packer.token_groups[token_packer.amount].comment )
-	     sicxe_RecordAndSyntax( token_packer, token_packer.token_groups[token_packer.amount], sicxe ) ; // 紀錄一行一行的label ins group1 group2/ 紀錄nixpb和是否forward reference
-	  int temp = token_packer.amount-1; //上一個 
-	  if ( temp != -1 )
-	    while ( token_packer.token_groups[temp].EQU )
-	      temp--;
-	  if ( temp != -1 && !token_packer.token_groups[token_packer.amount].EQU && !token_packer.token_groups[token_packer.amount].START )
-	    token_packer.token_groups[token_packer.amount].location = token_packer.token_groups[temp].location + token_packer.token_groups[temp].label_length;
+	     sicxe_RecordAndSyntax( token_packer, token_packer.token_groups[token_packer.amount], sicxe ) ; // 
+	  Tokens &current = token_packer.token_groups[token_packer.amount];
+	  if ( current.START ) {
+	    int startAddr = 0;
+	    if ( parseHexNumber(current.tokens[2].value, startAddr) ) {
+	      current.location = startAddr;
+	      locationCounter = startAddr;
+	      hasLocation = true;
+	    }
+	  }
+	  else {
+	    if ( !hasLocation )
+	      hasLocation = true;
+	    if ( current.EQU ) {
+	      // location already set by EQU expression; do not advance counter
+	    } else {
+	      current.location = locationCounter;
+	      locationCounter += current.label_length;
+	    }
+	  }
 	  sicxe_setlocation ( token_packer.token_groups[token_packer.amount].location, token_packer.token_groups[token_packer.amount].hex_location );
 	  sicxe_setline( token_packer.token_groups[token_packer.amount].setedline, token_packer.token_groups[token_packer.amount].line ) ;
 	  sicxe_setcode( token_packer, token_packer.token_groups[token_packer.amount] );
@@ -2168,44 +2401,86 @@ void sicxe () {
 	sicxe_setbase(token_packer);
 	sicxe_resetcodedisp(token_packer); //format3 && !forwardreference
 	sicxe_pass2( token_packer );
-	newfile.close();//讀檔完後關閉檔案
-	outfile << "Line" << "  " << "Location" << "  " ;
-	outfile << "Source code" ;
-	for ( int i = 10 ; i < 50 ; i++ )
-	  outfile << " ";
-	outfile << "  ";
-	outfile << "Object code" << endl ;
-	outfile << "----" << "  " << "--------" << "  " ;
-	outfile << "-----------" ;
-	for ( int i = 10 ; i < 50 ; i++ )
-	  outfile << " ";
-	outfile << "  ";
-	outfile << "-----------" << endl ;
-	for ( int b = 0 ; b < token_packer.amount; b++) { //TEST
-	    outfile << token_packer.token_groups[b].setedline << "  ";
-	    if ( token_packer.token_groups[b].error.empty() ) {
-	      if ( token_packer.token_groups[b].end || token_packer.token_groups[b].comment || token_packer.token_groups[b].base )
-	        outfile << "          ";
-	      else
-	        outfile << token_packer.token_groups[b].hex_location << "      ";
-	      if ( token_packer.token_groups[b].label.empty() )
-	        outfile << "        ";
-		  outfile << token_packer.token_groups[b].sourcestatement << "  ";
-		  for ( int i = 10 ; i < 50 ; i++ )
-	        outfile << " ";
-		  outfile << token_packer.token_groups[b].objectcode;
-		  //outfile <<  getpacker( token_packer.token_groups[b]) ; //寫入檔案 //TEST
-		  outfile << endl;
-		} // if
-		  else
-		    outfile << token_packer.token_groups[b].error << endl;
+	newfile.close();//Close file after reading
+	outfile << "Line  Location  Source code                              Object code\r\n";
+	outfile << "----  -------- -------------------------                 -----------\r\n";
+	for ( int b = 0 ; b < token_packer.amount; b++) { //
+	    const auto &tg = token_packer.token_groups[b];
+	    if ( !tg.error.empty() ) {
+	      outfile << tg.error << "\r\n";
+	      continue;
+	    }
+	    if( tg.sourcestatement.empty() ) {
+	      outfile << "\r\n" ;
+	      continue;
+	    }
+
+	    auto sanitize = [](string s) {
+	      for ( char &c : s )
+	        if ( c == '\t' ) c = ' ';
+	      return s;
+	    };
+
+	    string label = sanitize(tg.label);
+	    string mnemonic = sanitize(tg.ins);
+	    if ( tg.format == 4 && !mnemonic.empty() && mnemonic[0] != '+' )
+	      mnemonic.insert(0, "+");
+	    string operand;
+	    if ( !tg.group1.empty() )
+	      operand = sanitize(tg.group1);
+	    if ( !tg.group2.empty() ) {
+	      if ( !operand.empty() )
+	        operand.append(",");
+	      operand.append(sanitize(tg.group2));
+	    }
+
+	    auto pad = [&](const string &s, int width) {
+	      string out = s;
+	      if ( out.length() < static_cast<size_t>(width) )
+	        out.append(width - out.length(), ' ');
+	      return out;
+	    };
+
+	    string line_field = pad(tg.setedline,4);
+	    string loc_field = (tg.comment || tg.end || tg.base) ? "" : tg.hex_location;
+	    loc_field = pad(loc_field,4);
+	    string label_field = pad(label,15);
+	    string mnemonic_field = pad(mnemonic,10);
+	    string operand_field = operand;
+	    string source_field = label_field + mnemonic_field + operand_field;
+
+	    if ( tg.comment ) {
+	      string comment_text = sanitize(tg.sourcestatement);
+	      source_field = pad("",15) + comment_text; // keep comments aligned to the mnemonic column
+	    }
+
+	    string prefix = line_field + "  " + loc_field + "  " + source_field;
+	    string obj;
+	    if ( !tg.pseudo && !tg.objectcode.empty() )
+	      obj = tg.objectcode;
+	    int needed = 0;
+	    if ( obj.empty() ) {
+	      int targetLen = 57; // default padding when no object code
+	      if ( tg.comment ) targetLen = 43;
+	      else if ( tg.end ) targetLen = 52;
+	      needed = targetLen - static_cast<int>(prefix.length());
+	    } else {
+	      int targetLen = 57 + static_cast<int>(obj.length()); // object field always starts at column 58
+	      needed = targetLen - static_cast<int>(prefix.length()) - static_cast<int>(obj.length());
+	    }
+	    if ( needed < 0 ) needed = 0;
+	    prefix.append(needed, ' ');
+	    if ( !obj.empty() )
+	      outfile << prefix << obj << "\r\n";
+	    else
+	      outfile << prefix << "\r\n";
 	} // for
-    //Sicxe_Instruction_print( sicxe ); // test
-	outfile.close();//寫檔完後關閉檔案 
+    //Sicxe_Instruction_print( sicxe ); // 
+	outfile.close();//Close output file 
 } // sicxe
 
 int main() {
-	int command = 0; //第一個input(0, 1, 2)
+	int command = 0; // 
 	do { 
 	  cout << endl << "** Assembler **";
 	  cout << endl << "* 0. Quit     *";
@@ -2213,20 +2488,24 @@ int main() {
 	  cout << endl << "* 2. SICXE    *"; 
 	  cout << endl << "***************"; 
 	  cout << endl << "Input a command(0, 1, 2): "; 
-	  cin >> command;  //cin第一個input(0, 1, 2)
+	  cin >> command;  // 
 	  switch(command){
 	  	case 0 : break;
-	  	case 1 : 
-	      sic();
+	  	case 1 : {
+	      string inputPath = promptFilePath("Enter SIC input file path: ");
+	      string outputPath = promptFilePath("Enter SIC output file path: ");
+	      sic(inputPath, outputPath);
 	      break;
-	    case 2 : 
-	      sicxe();  
+	    }
+	    case 2 : {
+	      string inputPath = promptFilePath("Enter SICXE input file path: ");
+	      string outputPath = promptFilePath("Enter SICXE output file path: ");
+	      sicxe(inputPath, outputPath);  
 	      break;
-	    default : cout << endl << "Command does not exist!" << endl; //input 0,1,2以外的 
+	    }
+	    default : cout << endl << "Command does not exist!" << endl; // 
 	  }
 	} while ( command != 0 );
 	system ( "pause" );
 	return 0;
 } //main
-
-
