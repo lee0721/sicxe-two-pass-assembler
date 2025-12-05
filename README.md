@@ -1,14 +1,18 @@
 # SIC / SICXE Two-Pass Assembler
 
-A C++17 implementation of a two-pass assembler that targets both SIC and SIC/XE. It reads assembly source, resolves symbols, emits listings, and produces object code that matches the reference outputs used in the original course project.
+Single-file C++17 assembler (`code.cpp`) for both SIC and SIC/XE. It performs a classic two-pass flow:
+1. **Pass 1**: tokenizes each line, resolves labels, builds the symbol table, and assigns location counters.
+2. **Pass 2**: generates object code (handles formats 1–4, addressing flags nixbpe), expands directives, and writes a listing that matches the reference column layout.
+
+Everything lives in `code.cpp` so you can compile and submit a single source file for coursework, while external tables stay as data files.
 
 ## Project Layout
-- `code.cpp` – single-file implementation of the two-pass assembler (SIC + SICXE).
-- `SICTABLE/` – opcode and directive tables for SIC/SICXE (formerly `Table*.table`).
+- `code.cpp` – full assembler (tokenizer, symbol management, pass 1/2, listing/object output).
+- `SICTABLE/` – opcode/directive tables (formerly `Table*.table`).
 - `Sic_Instruction_Set.table`, `Sicxe_Instruction_Set.table` – instruction set definitions.
-- `test_input&output/` – sample inputs/expected outputs for quick checks.
-- `sic_lab_testcases/` – additional lab test cases.
-- `doc/` – assignment handouts and flowchart for reference.
+- `test_input&output/` – sample inputs and their reference outputs.
+- `sic_lab_testcases/` – additional lab inputs/expected outputs.
+- `doc/` – assignment handouts and flowchart (original project docs).
 
 ## Build
 ```bash
@@ -19,22 +23,18 @@ g++ -std=c++17 code.cpp -o assembler
 ```bash
 ./assembler
 ```
-Follow the menu prompts:
-1. Choose `1` for SIC or `2` for SICXE.
-2. Provide input file path (e.g., `test_input&output/SIC_input.txt`).
-3. Provide output file path (e.g., `test_input&output/SIC_output_generated.txt`).
-
-The program writes a formatted listing with locations and object code to the specified output file.
+Menu steps:
+1. Enter `1` for SIC or `2` for SICXE.
+2. Input path (e.g., `test_input&output/SIC_input.txt`).
+3. Output path (e.g., `test_input&output/SIC_output_generated.txt`).
 
 ## Quick Verification
-- SIC: compare `test_input&output/SIC_output_generated.txt` with `test_input&output/SIC_correct_output.txt`.
-- SICXE: compare `test_input&output/SICXE_output_generated.txt` with `test_input&output/SICXE_correct_output.txt`.
-
-```bash
-diff -u test_input&output/SIC_correct_output.txt test_input&output/SIC_output_generated.txt
-diff -u test_input&output/SICXE_correct_output.txt test_input&output/SICXE_output_generated.txt
-```
+- SIC: `diff -u test_input&output/SIC_correct_output.txt test_input&output/SIC_output_generated.txt`
+- SICXE: `diff -u test_input&output/SICXE_correct_output.txt test_input&output/SICXE_output_generated.txt`
 
 ## Notes
-- The assembler assumes all supporting tables remain in the repo root (`SICTABLE/`, `Sic_Instruction_Set.table`, `Sicxe_Instruction_Set.table`).
-- Object code formatting now matches the provided reference listings column-for-column.
+- Keep the tables in place (`SICTABLE/`, `Sic_Instruction_Set.table`, `Sicxe_Instruction_Set.table`).
+- Listing formatting matches the provided reference outputs column-for-column.
+
+## License
+MIT License (see `LICENSE`).
