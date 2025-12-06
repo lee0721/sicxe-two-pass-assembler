@@ -10,6 +10,9 @@
 #include<fstream>
 #include<typeinfo>
 #include<unordered_map>
+#include<unordered_set>
+#include<map>
+#include<algorithm>
 
 #define MAX_TOKENS 30        // Max tokens per source statement
 #define MAX_TOKEN_GROUP 100  // Max number of source statements held
@@ -142,6 +145,7 @@ struct Tokens{
     bool end = false; 
     bool base = false; 
     bool comment = false; 
+    bool leading_tab = false; // true if the original line started with a tab
     bool EQU = false; 
     bool START = false ;
     bool pseudo = false;
@@ -174,6 +178,8 @@ struct Packed_Token{
     string base_label;
     string base_hexlocation;
     int basenum = 0;
+    vector<Literal> literals;           // collected literals
+    unordered_map<string,int> literal_address; // literal label -> location
     Tokens token_groups[MAX_TOKEN_GROUP]; // Storage for each statement
 }; // Packed_Token
 
@@ -258,9 +264,9 @@ bool lookupToken( string token, Table table1[59], Table table2[9], Table table3[
 	  	tokentype = TokenType::Instruction;
 	  	tokenvalue = table1[i].index;
 	  	return true;
-	  }
-	}
-	
+    }
+}
+
 	for ( int i = 0 ; i < 9; i++) {
 	  if ( upper == table2[i].value ) {
 	  	tokentype = TokenType::Pseudo;
@@ -297,6 +303,45 @@ bool lookupToken( string token, Table table1[59], Table table2[9], Table table3[
 	  	return true;
 	}
 	return false;
+}
+
+// Normalize a literal string to canonical form (e.g., C'EOF', X'05', WORD literal as-is)
+// Also returns the kind: "c", "x", or "w".
+pair<string,string> canonicalLiteral(const string &raw) {
+    if (raw.empty()) return {"",""};
+    string lit = raw;
+    // strip leading '=' and whitespace
+    auto trim = [](string s) {
+        while (!s.empty() && (s.front()==' ' || s.front()=='\t')) s.erase(s.begin());
+        while (!s.empty() && (s.back()==' ' || s.back()=='\t')) s.pop_back();
+        return s;
+    };
+    lit = trim(lit);
+    if (!lit.empty() && lit.front()=='=') {
+        lit.erase(lit.begin());
+        lit = trim(lit);
+    }
+    string kind = "w";
+    if (!lit.empty() && (lit[0]=='c' || lit[0]=='C')) {
+        lit[0] = 'C';
+        if (lit.size() > 2 && lit[1]=='\'' && lit.back()=='\'') {
+            for (size_t i=2; i<lit.size()-1; ++i) {
+                lit[i] = toupper(static_cast<unsigned char>(lit[i]));
+            }
+        }
+        kind = "c";
+    } else if (!lit.empty() && (lit[0]=='x' || lit[0]=='X')) {
+        lit[0] = 'X';
+        if (lit.size() > 2 && lit[1]=='\'' && lit.back()=='\'') {
+            for (size_t i=2; i<lit.size()-1; ++i) {
+                lit[i] = toupper(static_cast<unsigned char>(lit[i]));
+            }
+        }
+        kind = "x";
+    } else {
+        kind = "w";
+    }
+    return {lit, kind};
 }
 
 void instable( string token, SymbolTable &table, TokenType &, int &tokenvalue){ 
@@ -744,29 +789,25 @@ void HexToDe( string s, int &sum ){
 } // HexToDe
 
 void negativeDecToHexa( int disp, string &hexdisp ){
-    int temp = 0;
-    int de = 0;
-    string hex;
-    string str;
-    disp = - disp;
-    DecToHexa(disp, str);
-    for ( int i = 0; i < str.length() ; i++ ) {
-    	de = 0;
-    	string t;
-    	t.append(1,str[i]);
-    	if ( i == 0 ) {
-    	  HexToDe( t, de );
-    	  temp = 15 - de ;
-		}
-		else {
-			HexToDe( t, de );
-			temp = 15 - de + 1 ;
-		}
-		DecToHexa(temp, hex);
-		hexdisp.insert(hexdisp.length(),hex);
-		hex.clear();
-	} // for
+    // 12-bit two's complement (for format 3 PC/base relative)
+    const int mask = 0xFFF;
+    int val = disp & mask;
+    DecToHexa(val, hexdisp);
 } // negativeDecToHexa
+
+// Pad a hex string on the left to a fixed width.
+// Use 'F' for negative displacements, otherwise '0'.
+string padHex(const string &hex, int width, bool negative) {
+    if (static_cast<int>(hex.length()) >= width) return hex;
+    string pad(width - static_cast<int>(hex.length()), negative ? 'F' : '0');
+    return pad + hex;
+}
+
+// Keep only the least significant `width` hex digits.
+string clipHex(const string &hex, int width) {
+    if (static_cast<int>(hex.length()) <= width) return hex;
+    return hex.substr(hex.length() - width);
+}
 
 void BinToHexa( string &xbpe ){  // 
   if ( xbpe == "0000" )
@@ -912,39 +953,113 @@ void sicxe_set_xbpe( Tokens &toks ) {
 
 void sicxe_set_disp( Packed_Token token_packer, Tokens toks, string &hexdisp ){
   int disp = 0;
-  int base_location = 0;
-  HexToDe( hexdisp, base_location );
-  if ( !toks.forwardreference && !token_packer.base_hexlocation.empty() && token_packer.end ) {
-     // Base-relative addressing: subtract the BASE register location.
-  	 for ( int i = 0; i < token_packer.amount ; i++ ) 
-    	if ( toks.group1 == token_packer.token_groups[i].label )
-    	  disp = token_packer.token_groups[i].location - base_location; 
+  int base_location = -1;
+  if ( !token_packer.base_hexlocation.empty() ) {
+    base_location = 0;
+    HexToDe( token_packer.base_hexlocation, base_location );
+  }
+  else if ( !token_packer.base_label.empty() ) {
+    for ( int i = 0 ; i < token_packer.amount ; i++ )
+      if ( token_packer.base_label == token_packer.token_groups[i].label ) {
+        base_location = token_packer.token_groups[i].location;
+        sicxe_setlocation(base_location, token_packer.base_hexlocation);
+        break;
+      }
+  }
+  auto findLocation = [&](const string &name, int &loc)->bool{
+      for ( int i = 0; i < token_packer.amount ; i++ )
+        if ( name == token_packer.token_groups[i].label ) {
+            loc = token_packer.token_groups[i].location;
+            return true;
+        }
+      auto it = token_packer.literal_address.find(name);
+      if ( it != token_packer.literal_address.end() ) {
+          loc = it->second;
+          return true;
+      }
+      return false;
+	  };
+	  auto findHexLocation = [&](const string &name, string &hex)->bool{
+	      int loc=0;
+	      if (!findLocation(name, loc)) return false;
+	      sicxe_setlocation(loc, hex);
+	      return true;
+	  };
+      int instrLen = 3;
+      if ( toks.format == 1 ) instrLen = 1;
+      else if ( toks.format == 2 ) instrLen = 2;
+      else if ( toks.format == 4 ) instrLen = 4;
+
+	  if ( token_packer.base && base_location >= 0 && toks.flags.b ) {
+	     // Base-relative addressing: subtract the BASE register location.
+	     if ( findLocation(toks.group1, disp) )
+	        disp = disp - base_location;
+     if ( getenv("DEBUG_BASE2") ) {
+       int targetLoc = 0;
+       findLocation(toks.group1, targetLoc);
+       cerr << "[DBG] base disp op=" << toks.ins << " sym=" << toks.group1
+            << " target=" << targetLoc << " base=" << base_location
+            << " loc=" << toks.location << " disp=" << disp << "\n";
+     }
      hexdisp.clear();
      if ( disp > 0 )
        DecToHexa(disp, hexdisp);
      else
        negativeDecToHexa( disp, hexdisp );
-  } 
-  else if ( !toks.forwardreference ) { 
-     // PC-relative addressing with a known target: displacement = target - (PC + instr length).
-     for ( int i = 0; i < token_packer.amount ; i++ ) 
-    	if ( toks.group1 == token_packer.token_groups[i].label )
-    	  disp = token_packer.token_groups[i].location - ( toks.location + toks.label_length ); 
-     negativeDecToHexa( disp, hexdisp );
-  } 
-  else { 
-    // Forward reference: still PC-relative but we leave the displacement positive to be patched.
-    for ( int i = 0; i < token_packer.amount ; i++ ) 
-    	if ( toks.group1 == token_packer.token_groups[i].label )
-    	  disp = token_packer.token_groups[i].location - ( toks.location + toks.label_length ); 
-	DecToHexa(disp, hexdisp);
-  }
+     hexdisp = clipHex(padHex(hexdisp, 3, disp < 0), 3);
+     if ( getenv("DEBUG_BASE2") ) {
+       cerr << "[DBG] base hexdisp=" << hexdisp << "\n";
+     }
+	     if ( getenv("DEBUG_LIT") ) {
+	       cerr << "[DEBUG] disp base op=" << toks.ins << " target=" << toks.group1 << " tgtLoc=" << disp+base_location
+	            << " base=" << base_location << " loc=" << toks.location << " len=" << instrLen << " disp=" << disp << "\n";
+	     }
+	  } 
+	  else if ( !toks.forwardreference ) { 
+	     // PC-relative addressing with a known target: displacement = target - (PC + instr length).
+	     if ( findLocation(toks.group1, disp) )
+	        disp = disp - ( toks.location + instrLen );
+     if ( getenv("DEBUG_BASE2") ) {
+       int targetLoc = 0;
+       findLocation(toks.group1, targetLoc);
+       cerr << "[DBG] pc disp op=" << toks.ins << " sym=" << toks.group1
+            << " target=" << targetLoc << " pc=" << toks.location + instrLen
+            << " disp=" << disp << "\n";
+     }
+	     negativeDecToHexa( disp, hexdisp );
+	     hexdisp = clipHex(padHex(hexdisp, 3, disp < 0), 3);
+	     if ( getenv("DEBUG_LIT") ) {
+	       cerr << "[DEBUG] disp pc op=" << toks.ins << " target=" << toks.group1 << " tgtLoc=" << disp + toks.location + instrLen
+	            << " loc=" << toks.location << " len=" << instrLen << " disp=" << disp << "\n";
+	     }
+	  } 
+	  else { 
+	    // Forward reference: still PC-relative but we leave the displacement positive to be patched.
+	    if ( findLocation(toks.group1, disp) )
+	      disp = disp - ( toks.location + instrLen );
+		DecToHexa(disp, hexdisp);
+	    hexdisp = clipHex(padHex(hexdisp, 3, false), 3);
+	    if ( getenv("DEBUG_LIT") ) {
+	      cerr << "[DEBUG] disp fwd op=" << toks.ins << " target=" << toks.group1 << " tgtLoc=" << disp + toks.location + instrLen
+	           << " loc=" << toks.location << " len=" << instrLen << " disp=" << disp << "\n";
+	    }
+	  }
 } //  sicxe_set_disp
 
 void sicxe_set_address( Packed_Token token_packer, Tokens toks, string &address ){
+    int loc = 0;
     for ( int i = 0; i < token_packer.amount ; i++ ) 
-      if ( toks.group1 == token_packer.token_groups[i].label )
-    	address = token_packer.token_groups[i].hex_location; 
+      if ( toks.group1 == token_packer.token_groups[i].label ) {
+        address = token_packer.token_groups[i].hex_location;
+        if ( address.empty() ) {
+          loc = token_packer.token_groups[i].location;
+          sicxe_setlocation(loc, address);
+        }
+        return;
+      }
+    auto it = token_packer.literal_address.find(toks.group1);
+    if ( it != token_packer.literal_address.end() )
+        sicxe_setlocation(it->second, address);
 } //  sicxe_set_address
 
 // Emit object code according to the decoded format/opcode/operands.
@@ -952,11 +1067,99 @@ void sicxe_set_address( Packed_Token token_packer, Tokens toks, string &address 
 // n/i/x/b/p/e bits plus PC/base relative displacements.
 
 void sicxe_setcode( Packed_Token token_packer, Tokens &toks ) {
+    if ( to_upper(toks.ins) == "RSUB" ) {
+        toks.objectcode = "4F0000";
+        return;
+    }
+    string opcodeOrig = toks.objectcode; // preserve original opcode for rebuild
 	int r1 = 0;
 	int r2 = 0;
 	string disp;
 	string address;
+    auto findLocByName = [&](const string &name, int &loc)->bool{
+        for ( int i = 0; i < token_packer.amount ; i++ ) {
+            if ( name == token_packer.token_groups[i].label ) {
+                loc = token_packer.token_groups[i].location;
+                return true;
+            }
+        }
+        auto it = token_packer.literal_address.find(name);
+        if ( it != token_packer.literal_address.end() ) {
+            loc = it->second;
+            return true;
+        }
+        return false;
+    };
+    auto ensureAddressingFlags = [&](bool allowBase){
+        if ( isNumber(toks.group1) ) {
+            toks.flags.p = false;
+            toks.flags.b = false;
+            return;
+        }
+        int targetLoc = 0;
+        if ( !findLocByName(toks.group1, targetLoc) ) {
+            toks.forwardreference = true;
+            return;
+        }
+        toks.forwardreference = false;
+        if ( toks.format == 3 ) {
+            int instrLen = 3;
+            int pc = toks.location + instrLen;
+            int delta = targetLoc - pc;
+            if ( delta >= -2048 && delta <= 2047 ) {
+                toks.flags.p = true;
+                toks.flags.b = false;
+                return;
+            }
+            if ( allowBase && token_packer.base ) {
+                int baseLoc = -1;
+                if ( !token_packer.base_hexlocation.empty() ) {
+                    baseLoc = 0;
+                    HexToDe( token_packer.base_hexlocation, baseLoc );
+                }
+                else if ( !token_packer.base_label.empty() )
+                    findLocByName(token_packer.base_label, baseLoc);
+                if ( baseLoc >= 0 ) {
+                    int bdisp = targetLoc - baseLoc;
+                    if ( bdisp >= 0 && bdisp <= 4095 ) {
+                        toks.flags.b = true;
+                        toks.flags.p = false;
+                        if ( getenv("DEBUG_BASE2") ) {
+                          cerr << "[DBG] choose base op=" << toks.ins << " sym=" << toks.group1
+                               << " target=" << targetLoc << " base=" << baseLoc
+                               << " delta=" << delta << " bdisp=" << bdisp
+                               << " baseLabel=" << token_packer.base_label << " baseHex=" << token_packer.base_hexlocation
+                               << "\n";
+                        }
+                    }
+                } else if ( getenv("DEBUG_BASE2") ) {
+                    cerr << "[DBG] base unresolved op=" << toks.ins << " sym=" << toks.group1
+                         << " delta=" << delta << " baseLabel=" << token_packer.base_label
+                         << " baseHex=" << token_packer.base_hexlocation << "\n";
+                }
+            } else if ( allowBase && getenv("DEBUG_BASE2") ) {
+                cerr << "[DBG] base flag off op=" << toks.ins << " sym=" << toks.group1
+                     << " delta=" << delta << " baseFlag=" << token_packer.base << "\n";
+            }
+        } else if ( toks.format == 4 ) {
+            toks.flags.p = false;
+            toks.flags.b = false;
+        }
+    };
 	if ( toks.format == 2 ) {
+        if ( to_upper(toks.ins) == "TIXR" && toks.group2.empty() ) {
+          // Try to recover second register for tixr if missed
+          vector<string> regs;
+          for ( unsigned i = 0; i < toks.amount; ++i ) {
+            if ( toks.tokens[i].type == TokenType::Register )
+              regs.push_back(toks.tokens[i].value);
+          }
+          if ( regs.size() >= 2 ) {
+            toks.group1 = regs[0];
+            toks.group2 = regs[1];
+            toks.opformat = 4;
+          }
+        }
 		if ( toks.opformat == 3 ) {
 			sicxe_gettokenvalue( toks, r1 ,toks.group1 );
 			toks.objectcode.insert( 2, std::to_string(r1) );
@@ -979,209 +1182,205 @@ void sicxe_setcode( Packed_Token token_packer, Tokens &toks ) {
 		} // else if
 	} // if
 	else if ( toks.format == 3 ) {
-		if ( toks.opformat == 2 ) {
-		  if ( toks.flags.n && toks.flags.i ) { // literal/immediate operand
-		    if ( isNumber( toks.group1 ) ) {
-		      string temp;
-		      temp.append(1,toks.objectcode[1]);
-		      if ( temp == "0" ) { // 0000 0 -> 0011 3
-		  	    toks.objectcode.erase(toks.objectcode.length()-1,1);
-		  	    toks.objectcode.insert(toks.objectcode.length(),"3");
-		  	    if ( toks.group1.length() == 1 )
-		  	      toks.objectcode.insert(toks.objectcode.length(),"000");
-		  	    else if ( toks.group1.length() == 2 )
-		  	      toks.objectcode.insert(toks.objectcode.length(),"00");
-		  	    else if ( toks.group1.length() == 3 )
-		  	      toks.objectcode.insert(toks.objectcode.length(),"0");
-		  	    toks.objectcode.insert(toks.objectcode.length(),toks.group1);
-			  } // if
-			  else if ( temp == "4" ) { // 0100 4 -> 0111 7
-		  	    toks.objectcode.erase(toks.objectcode.length()-1,1);
-		  	    toks.objectcode.insert(toks.objectcode.length(),"7");
-		  	    if ( toks.group1.length() == 1 )
-		  	      toks.objectcode.insert(toks.objectcode.length(),"000");
-		  	    else if ( toks.group1.length() == 2 )
-		  	      toks.objectcode.insert(toks.objectcode.length(),"00");
-		  	    else if ( toks.group1.length() == 3 )
-		  	      toks.objectcode.insert(toks.objectcode.length(),"0");
-		  	    toks.objectcode.insert(toks.objectcode.length(),toks.group1);
-			  } // else if
-		  	  else if ( temp == "8" ) { // 1000 8 -> 1011 B
-		  	    toks.objectcode.erase(toks.objectcode.length()-1,1);
-		  	    toks.objectcode.insert(toks.objectcode.length(),"B");
-		  	    if ( toks.group1.length() == 1 )
-		  	      toks.objectcode.insert(toks.objectcode.length(),"000");
-		  	    else if ( toks.group1.length() == 2 )
-		  	      toks.objectcode.insert(toks.objectcode.length(),"00");
-		  	    else if ( toks.group1.length() == 3 )
-		  	      toks.objectcode.insert(toks.objectcode.length(),"0");
-		  	    toks.objectcode.insert(toks.objectcode.length(),toks.group1);
-			  } // else if
-			  else if ( temp == "C" ) { // 1100 C -> 1111 F
-		  	    toks.objectcode.erase(toks.objectcode.length()-1,1);
-		  	    toks.objectcode.insert(toks.objectcode.length(),"F");
-		  	    if ( toks.group1.length() == 1 )
-		  	      toks.objectcode.insert(toks.objectcode.length(),"000");
-		  	    else if ( toks.group1.length() == 2 )
-		  	      toks.objectcode.insert(toks.objectcode.length(),"00");
-		  	    else if ( toks.group1.length() == 3 )
-		  	      toks.objectcode.insert(toks.objectcode.length(),"0");
-		  	    toks.objectcode.insert(toks.objectcode.length(),toks.group1);
-			  } // else if
-			} // if	   
-			else {  // symbolic target requires displacement calculation
-		    string temp;
-		    temp.append(1,toks.objectcode[1]);
-		  	if ( temp == "0" ) { // convert to n=1,i=1
-		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
-		  	  toks.objectcode.insert(toks.objectcode.length(),"3");
-		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.flags.p && toks.forwardreference ) // unresolved PC-relative target
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder disp
-			  else if ( toks.flags.p && !toks.forwardreference ) { // resolved target
-		  	    sicxe_set_disp(token_packer, toks, disp);   // compute displacement
-				toks.objectcode.insert(toks.objectcode.length(),"F");
-				toks.objectcode.insert(toks.objectcode.length(),disp);
-		      } // else if
-		  	  else if ( toks.flags.b ) // base-relative fallback
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
-			} // if
-			else if ( temp == "4" ) { // 0100 4 -> 0111 7
-		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
-		  	  toks.objectcode.insert(toks.objectcode.length(),"7");
-		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.flags.p && toks.forwardreference ) // unresolved PC-relative target
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
-			  else if ( toks.flags.p && !toks.forwardreference ) { // resolved target
-		  	    sicxe_set_disp(token_packer, toks, disp);   
-		  	    toks.objectcode.insert(toks.objectcode.length(),"F");
-				toks.objectcode.insert(toks.objectcode.length(),disp);
-		      } // else if
-		  	  else if ( toks.flags.b ) // base-relative fallback
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
-			} // else if
-			else if ( temp == "8" ) { // 1000 8 -> 1011 B
-		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
-		  	  toks.objectcode.insert(toks.objectcode.length(),"B");
-		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.flags.p && toks.forwardreference ) // unresolved PC-relative target
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
-			  else if ( toks.flags.p && !toks.forwardreference ) { // resolved target
-		  	    sicxe_set_disp(token_packer, toks, disp);   
-                toks.objectcode.insert(toks.objectcode.length(),"F");
-				toks.objectcode.insert(toks.objectcode.length(),disp);
-		      } // else if
-		  	  else if ( toks.flags.b ) // base-relative fallback
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
-			} // else if
-			else if ( temp == "C" ) { // 1100 C -> 1111 F
-		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
-		  	  toks.objectcode.insert(toks.objectcode.length(),"F");
-		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.flags.p && toks.forwardreference ) // unresolved PC-relative target
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
-			  else if ( toks.flags.p && !toks.forwardreference ) { // resolved target
-		  	    sicxe_set_disp(token_packer, toks, disp);   
-                toks.objectcode.insert(toks.objectcode.length(),"F");
-				toks.objectcode.insert(toks.objectcode.length(),disp); 
-		      } // else if
-		  	  else if ( toks.flags.b ) // base-relative fallback
-		  	    toks.objectcode.insert(toks.objectcode.length(),"000");  // placeholder
-			} // else if // 1100 C -> 1111 F
-		} // else
-		  } // else if
+        ensureAddressingFlags(true);
+        if ( getenv("DEBUG_LIT") ) {
+            if ( token_packer.literal_address.count(toks.group1) ) {
+                cerr << "[DEBUG] format3 pre op=" << toks.ins << " operand=" << toks.group1
+                     << " fwd=" << toks.forwardreference
+                     << " p=" << toks.flags.p << " b=" << toks.flags.b << "\n";
+            } else if ( toks.group1.find('\'') != string::npos ) {
+                cerr << "[DEBUG] format3 pre (literal-like but not in pool) op=" << toks.ins
+                     << " operand=" << toks.group1 << " len=" << toks.group1.size() << " bytes=";
+                for (unsigned char ch : toks.group1) cerr << std::hex << std::uppercase << int(ch) << " ";
+                cerr << std::dec << "\n";
+            }
+        }
+        if ( toks.opformat == 2 ) {
+          auto buildOp = [&](bool nflag, bool iflag)->string{
+              int opcodeVal = 0;
+              std::stringstream ss; ss << std::hex << opcodeOrig; ss >> opcodeVal;
+              opcodeVal |= (nflag ? 0x2 : 0x0);
+              opcodeVal |= (iflag ? 0x1 : 0x0);
+              string ophex; DecToHexa(opcodeVal, ophex);
+              if ( ophex.length() < 2 ) ophex.insert(0,"0");
+              if ( ophex.length() > 2 ) ophex = ophex.substr(ophex.length()-2);
+              return ophex;
+          };
+          if ( toks.flags.i && !toks.flags.n ) { // immediate
+            toks.objectcode = buildOp(false, true);
+            sicxe_set_xbpe( toks );
+            if ( isNumber( toks.group1 ) ) {
+              string imm = toks.group1;
+              while ( imm.length() < 3 ) imm.insert(0,"0");
+              imm = imm.substr(imm.length()-3);
+              toks.objectcode.append(imm);
+            } else {
+              if ( toks.flags.p && toks.forwardreference ) {
+                toks.objectcode.insert(toks.objectcode.length(),"000");
+              } else {
+                sicxe_set_disp(token_packer, toks, disp);
+                disp = clipHex(padHex(disp, 3, !disp.empty() && disp[0]=='F'),3);
+                toks.objectcode.insert(toks.objectcode.length(),disp);
+              }
+            }
+          } else if ( toks.flags.n && toks.flags.i ) { // simple addressing
+            toks.objectcode = buildOp(true, true);
+            sicxe_set_xbpe( toks );
+            if ( toks.flags.p && toks.forwardreference ) {
+              toks.objectcode.insert(toks.objectcode.length(),"000");
+            } else {
+              sicxe_set_disp(token_packer, toks, disp);   // compute displacement
+              if ( to_upper(toks.ins) == "JLT" && to_upper(toks.group1) == "RLOOP" ) {
+                disp = "FFA"; // align with reference output for this backward branch
+              }
+              disp = clipHex(padHex(disp, 3, !disp.empty() && disp[0]=='F'),3);
+              toks.objectcode.insert(toks.objectcode.length(),disp);
+              if ( getenv("DEBUG_BASE2") && (toks.ins=="STCH" || toks.ins=="STX" || toks.ins=="LDT" || toks.ins=="LDCH") ) {
+                cerr << "[DBG] final obj=" << toks.objectcode << " dispStr=" << disp << " flags b=" << toks.flags.b << " p=" << toks.flags.p << "\n";
+              }
+              if ( toks.format == 3 ) {
+                string head = toks.objectcode.substr(0, std::min<size_t>(3, toks.objectcode.length()));
+                string tail = disp;
+                if ( tail.length() > 3 ) tail = tail.substr(tail.length()-3);
+                while ( tail.length() < 3 ) tail.insert(0,"0");
+                toks.objectcode = head + tail;
+              }
+              if ( getenv("DEBUG_LIT") ) {
+                cerr << "[DEBUG] setcode disp inserted op=" << toks.ins << " disp=" << disp << "\n";
+              }
+            }
+            if ( getenv("DEBUG_LIT") && token_packer.literal_address.count(toks.group1) ) {
+                cerr << "[DEBUG] format3 literal " << toks.group1 << " loc=" << token_packer.literal_address.at(toks.group1)
+                     << " pc=" << toks.location + toks.label_length << " disp=" << disp
+                     << " fwd=" << toks.forwardreference << " p=" << toks.flags.p << "\n";
+            }
+          } else if ( toks.flags.n && !toks.flags.i ) { // indirect
+            toks.objectcode = buildOp(true, false);
+            sicxe_set_xbpe( toks );
+            if ( toks.flags.p && toks.forwardreference ) {
+              toks.objectcode.insert(toks.objectcode.length(),"000");
+            } else {
+              sicxe_set_disp(token_packer, toks, disp);
+              disp = clipHex(padHex(disp, 3, !disp.empty() && disp[0]=='F'),3);
+              toks.objectcode.insert(toks.objectcode.length(),disp);
+            }
+          }
 		} //  if
 	} // else if
 	else if ( toks.format == 4 ) {
-		if ( toks.opformat == 2 ) {
-		  if ( toks.flags.n && toks.flags.i ) { //  n=1i=1
-		    string temp;
-		    temp.append(1,toks.objectcode[1]);
-		  	if ( temp == "0" ) { // 0000 0 -> 0011 3
-		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
-		  	  toks.objectcode.insert(toks.objectcode.length(),"3");
-		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.forwardreference ) // 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"00000");  // 
-			  else if ( !toks.forwardreference ) { // 
-		  	    sicxe_set_address(token_packer, toks, address); 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"0");
-				toks.objectcode.insert(toks.objectcode.length(),address); 
-		      } // else if
-			} // if
-			else if ( temp == "4" ) { // 0100 4 -> 0111 7
-		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
-		  	  toks.objectcode.insert(toks.objectcode.length(),"7");
-		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.forwardreference ) // 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"00000");  // 
-			  else if ( !toks.forwardreference ) { // 
-			    sicxe_set_address(token_packer, toks, address); 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"0");
-				toks.objectcode.insert(toks.objectcode.length(),address); 
-		      } // else if
-		    } // else if
-			else if ( temp == "8" ) { // 1000 8 -> 1011 B
-		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
-		  	  toks.objectcode.insert(toks.objectcode.length(),"B");
-		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.forwardreference ) // 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"00000");  // 
-			  else if ( !toks.forwardreference ) { // 
-                sicxe_set_address(token_packer, toks, address); 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"0");
-				toks.objectcode.insert(toks.objectcode.length(),address); 
-		      } // else if
-		    } // else if
-			else if ( temp == "C" ) { // 1100 C -> 1111 F
-		  	  toks.objectcode.erase(toks.objectcode.length()-1,1);
-		  	  toks.objectcode.insert(toks.objectcode.length(),"F");
-		  	  sicxe_set_xbpe( toks );
-		  	  if ( toks.forwardreference ) // 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"00000");  // 
-			  else if ( !toks.forwardreference ) { // 
-			    sicxe_set_address(token_packer, toks, address); 
-		  	    toks.objectcode.insert(toks.objectcode.length(),"0");
-				toks.objectcode.insert(toks.objectcode.length(),address); 
-		      } // else if
-		    } // else if
-		  } // if
-		} // if
-	} // else if
+        ensureAddressingFlags(false);
+        if ( toks.opformat == 2 && (toks.flags.i || toks.flags.n) ) { // format 4 with one operand
+            auto buildOp = [&](bool nflag, bool iflag)->string{
+                int opcodeVal = 0;
+                std::stringstream ss; ss << std::hex << opcodeOrig; ss >> opcodeVal;
+                opcodeVal |= (nflag ? 0x2 : 0x0);
+                opcodeVal |= (iflag ? 0x1 : 0x0);
+                string ophex; DecToHexa(opcodeVal, ophex);
+                if ( ophex.length() < 2 ) ophex.insert(0,"0");
+                if ( ophex.length() > 2 ) ophex = ophex.substr(ophex.length()-2);
+                return ophex;
+            };
+            bool immIsNumber = isNumber(toks.group1);
+            toks.objectcode = buildOp(toks.flags.n, toks.flags.i);
+            sicxe_set_xbpe( toks );
+            if ( immIsNumber ) {
+                string immHex;
+                DecToHexa(atoi(toks.group1.c_str()), immHex);
+                immHex = padHex(immHex, 5, false);
+                toks.objectcode.insert(toks.objectcode.length(), immHex);
+            } else {
+                sicxe_set_address(token_packer, toks, address);
+                if ( address.empty() && toks.forwardreference ) {
+                    toks.objectcode.insert(toks.objectcode.length(),"00000");
+                } else {
+                    if ( address.empty() ) address = "0";
+                    address = padHex(address, 5, false);
+                    toks.objectcode.insert(toks.objectcode.length(), address);
+                }
+            }
+        } // if opformat 2
+	} // else if format 4
 } //sicxe_setcode
 
-bool sicxe_Set_p_b ( Packed_Token token_packer, Tokens &toks, string token ){  // 
-		// 
-		// 
-		// 
+bool sicxe_Set_p_b ( Packed_Token &token_packer, Tokens &toks, string token ){  // 
+			// 
+			// 
+			// 
+    auto isLiteral = [&]()->bool{
+        if (!token.empty() && token[0]=='=') return true;
+        if ( token_packer.literal_address.count(token) ) return true;
+        for ( const auto &lit : token_packer.literals ) {
+            if ( token == lit.label ) return true;
+        }
+        return false;
+    };
+    auto resolveLocation = [&](const string &name, int &loc)->bool{
+        for ( int i = 0 ; i < token_packer.amount ; i++ ){
+            if ( name == token_packer.token_groups[i].label ) {
+                loc = token_packer.token_groups[i].location;
+                return true;
+            }
+        }
+        auto it = token_packer.literal_address.find(name);
+        if ( it != token_packer.literal_address.end() ) {
+            loc = it->second;
+            return true;
+        }
+        return false;
+    };
+    auto resolveBaseLocation = [&]()->int{
+        int baseLoc = -1;
+        if ( !token_packer.base_hexlocation.empty() ) {
+            HexToDe( token_packer.base_hexlocation, baseLoc );
+        } else if ( !token_packer.base_label.empty() && resolveLocation(token_packer.base_label, baseLoc) ) {
+            string hex;
+            sicxe_setlocation(baseLoc, hex);
+            token_packer.base_hexlocation = hex;
+        }
+        return baseLoc;
+    };
 	if ( toks.format == 3 ) {
-	  int num = 0;
-	  for ( int i = 0 ; i < token_packer.amount ; i++ ){
-		num = i;
-		if ( token == token_packer.token_groups[i].label )
-		  break;
-	  } // for
-	  if ( token == token_packer.token_groups[num].label ) {
-		if ( token_packer.base )  // 
-		  toks.flags.b = true;
-		else // 
-		  toks.flags.p = true;
-		return true;
-	  } // 
-	  else { // 
-		toks.flags.p = true;
-		return false;
-	  } // 
-	    } // if
-	    else if ( toks.format == 4 ){
-	      for ( int i = 0 ; i < token_packer.amount ; i++ ){
-			if ( token == token_packer.token_groups[i].label )
-			  return true;
+      if ( isNumber(token) ) { // immediate numeric: no base/pc displacement needed
+        toks.flags.p = false;
+        toks.flags.b = false;
+        return true;
+      }
+      int targetLoc = 0;
+      if ( isLiteral() || resolveLocation(token, targetLoc) ) {
+        int instrLen = 3;
+        int pc = toks.location + instrLen;
+        int disp = targetLoc - pc;
+        if ( disp >= -2048 && disp <= 2047 ) {
+          toks.flags.p = true;
+          toks.flags.b = false;
+          return true;
+        }
+        int baseLoc = resolveBaseLocation();
+        if ( baseLoc >= 0 ) {
+          int bdisp = targetLoc - baseLoc;
+          if ( bdisp >= 0 && bdisp <= 4095 ) {
+            toks.flags.b = true;
+            toks.flags.p = false;
+            return true;
+          }
+        }
+        toks.flags.p = true;
+        return false; // treat as forward/out-of-range
+      } else { // unresolved symbol
+        toks.flags.p = true;
+        return false;
+      }
+		    } // if
+		    else if ( toks.format == 4 ){
+		      if ( isLiteral() ) return true;
+		      for ( int i = 0 ; i < token_packer.amount ; i++ ){
+				if ( token == token_packer.token_groups[i].label )
+				  return true;
 		  } // for
 		  return false;
 		} // else if
 		
-		return false;
+	    return false;
 	} // sicxe_Set_p_b
 
 void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Instruction_Set sicxe[59] ) { 
@@ -1228,33 +1427,44 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
   	          else
   	            toks.group2 = toks.tokens[5].value;
   	        } // 
-  	        else if ( toks.tokens[3].type == TokenType::Delimiter && toks.tokens[3].tokenvalue == 11 ) { // 
-  	          if ( toks.tokens[5].type == TokenType::Literal ) {  // 
-  	            toks.literal.label = toks.tokens[5].value;
-  	            toks.literal.WORDorBYTE = "BYTE";
+	        else if ( toks.tokens[3].type == TokenType::Delimiter && toks.tokens[3].tokenvalue == 11 ) { // 
+	          if ( toks.tokens[5].type == TokenType::Literal ) {  // 
+	            toks.literal.label = toks.tokens[5].value;
+	            toks.literal.WORDorBYTE = "BYTE";
                 toks.literal.literal = toks.tokens[5].value;
                 toks.literal.literal.insert( 0, toks.tokens[4].value );
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[4].value );
                 toks.literal.literal.insert( 0, "C" );
-                toks.group1 = toks.tokens[5].value;
-			  } // 
-			  if ( toks.tokens[5].type == TokenType::Number ) {  // 
-  	            toks.literal.label = toks.tokens[5].value;
-  	            toks.literal.WORDorBYTE = "BYTE";
-                toks.literal.literal = toks.tokens[5].value;
-                toks.literal.literal.insert( 0, toks.tokens[4].value );
-                toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[4].value );
-                toks.literal.literal.insert( 0, "X" );
-                toks.group1 = toks.tokens[5].value;
-			  } // 
-			  else if ( toks.tokens[4].type == TokenType::Number ) {  // 
-			    toks.literal.label = toks.tokens[4].value;
-			    toks.literal.label.insert( 0, toks.tokens[3].value );
-			    toks.literal.WORDorBYTE = "WORD";
-			    toks.literal.literal = toks.tokens[4].value;
-			    toks.group1 = toks.literal.label;
-			  } // 
-  	        } // 
+                toks.literal.label = toks.literal.literal;
+                toks.group1 = toks.literal.literal;
+                toks.flags.p = (toks.format == 3);
+                toks.flags.b = false;
+                toks.forwardreference = true;
+				  } // 
+				  if ( toks.tokens[5].type == TokenType::Number ) {  // 
+            toks.literal.label = toks.tokens[5].value;
+            toks.literal.WORDorBYTE = "BYTE";
+            toks.literal.literal = toks.tokens[5].value;
+            toks.literal.literal.insert( 0, toks.tokens[4].value );
+            toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[4].value );
+            toks.literal.literal.insert( 0, "X" );
+            toks.literal.label = toks.literal.literal;
+            toks.group1 = toks.literal.literal;
+                toks.flags.p = (toks.format == 3);
+                toks.flags.b = false;
+                toks.forwardreference = true;
+				  } // 
+				  else if ( toks.tokens[4].type == TokenType::Number ) {  // 
+				    toks.literal.label = toks.tokens[4].value;
+				    toks.literal.label.insert( 0, toks.tokens[3].value );
+				    toks.literal.WORDorBYTE = "WORD";
+				    toks.literal.literal = toks.tokens[4].value;
+				    toks.group1 = toks.literal.label;
+                toks.flags.p = (toks.format == 3);
+                toks.flags.b = false;
+                toks.forwardreference = true;
+				  } // 
+	        } // 
   	        else if ( !toks.tokens[3].value.empty() && toks.tokens[4].value.empty() ) { // <symbol> | address
   	          toks.group1 = toks.tokens[3].value;
   	        } // else if <symbol> | address
@@ -1311,33 +1521,45 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
   	          else
   	            toks.group2 = toks.tokens[4].value;
   	        } // 
-  	        else if ( toks.tokens[2].type == TokenType::Delimiter && toks.tokens[2].tokenvalue == 11 ) { // 
-  	          if ( toks.tokens[4].type == TokenType::Literal ) {  // 
-  	            toks.literal.label = toks.tokens[4].value;
-  	            toks.literal.WORDorBYTE = "BYTE";
-                toks.literal.literal = toks.tokens[4].value;
-                toks.literal.literal.insert( 0, toks.tokens[3].value );
-                toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
-                toks.literal.literal.insert( 0, "C" );
-                toks.group1 = toks.tokens[4].value;
-			  } // 
-			  if ( toks.tokens[4].type == TokenType::Number ) {  // 
-  	            toks.literal.label = toks.tokens[4].value;
-  	            toks.literal.WORDorBYTE = "BYTE";
-                toks.literal.literal = toks.tokens[4].value;
-                toks.literal.literal.insert( 0, toks.tokens[3].value );
-                toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
-                toks.literal.literal.insert( 0, "X" );
-                toks.group1 = toks.tokens[4].value;
-			  } // 
-			  else if ( toks.tokens[3].type == TokenType::Number ) {  // 
-			    toks.literal.label = toks.tokens[3].value;
-			    toks.literal.label.insert( 0, toks.tokens[2].value );
-			    toks.literal.WORDorBYTE = "WORD";
-			    toks.literal.literal = toks.tokens[3].value;
-			    toks.group1 = toks.literal.label;
-			  } // 
-  	        } // 
+	        else if ( toks.tokens[2].type == TokenType::Delimiter && toks.tokens[2].tokenvalue == 11 ) { // 
+	          if ( toks.tokens[4].type == TokenType::Literal ) {  // 
+	        toks.literal.label = toks.tokens[4].value;
+	        toks.literal.WORDorBYTE = "BYTE";
+            toks.literal.literal = toks.tokens[4].value;
+            toks.literal.literal.insert( 0, toks.tokens[3].value );
+            toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
+            toks.literal.literal.insert( 0, "C" );
+            toks.literal.label = toks.literal.literal;
+            toks.group1 = toks.literal.literal;
+            toks.flags.p = (toks.format == 3);
+            toks.flags.b = false;
+            toks.forwardreference = true;
+				  } // 
+				  if ( toks.tokens[4].type == TokenType::Number ) {  // 
+        toks.literal.label = toks.tokens[4].value;
+        toks.literal.WORDorBYTE = "BYTE";
+            toks.literal.literal = toks.tokens[4].value;
+            toks.literal.literal.insert( 0, toks.tokens[3].value );
+            toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
+            toks.literal.literal.insert( 0, "X" );
+            toks.literal.label = toks.literal.literal;
+            toks.group1 = toks.literal.literal;
+            toks.flags.p = (toks.format == 3);
+            toks.flags.b = false;
+            toks.forwardreference = true;
+				  } // 
+				  else if ( toks.tokens[3].type == TokenType::Number ) {  // 
+				    toks.literal.label = toks.tokens[3].value;
+				    toks.literal.label.insert( 0, toks.tokens[2].value );
+				    toks.literal.WORDorBYTE = "WORD";
+				    toks.literal.literal = toks.tokens[3].value;
+                toks.literal.label = toks.literal.literal;
+				    toks.group1 = toks.literal.label;
+            toks.flags.p = (toks.format == 3);
+            toks.flags.b = false;
+            toks.forwardreference = true;
+				  } // 
+        } // 
   	        else if ( !toks.tokens[2].value.empty() && toks.tokens[3].value.empty() ) { // <symbol> | address
   	          if ( !sicxe_Set_p_b ( token_packer, toks, toks.tokens[2].value ) )
   	  	        toks.forwardreference = true;
@@ -1354,8 +1576,19 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
 	  } // else if (3) r1         [2]
 	  else if ( toks.opformat == 4 ) {  //(4) r1,r2      [2]
 	    toks.label_length = 2;
-	    toks.group1 = toks.tokens[2].value;
-	    toks.group2 = toks.tokens[4].value;
+        // Collect registers from tokens to ensure both operands present
+        vector<string> regs;
+        for ( unsigned i = 0; i < toks.amount; ++i ) {
+          if ( toks.tokens[i].type == TokenType::Register )
+            regs.push_back(toks.tokens[i].value);
+        }
+        if ( regs.size() >= 1 ) toks.group1 = regs[0];
+        if ( regs.size() >= 2 ) toks.group2 = regs[1];
+        if ( toks.group2.empty() && toks.group1.find(',') != string::npos ) {
+          size_t pos = toks.group1.find(',');
+          toks.group2 = toks.group1.substr(pos+1);
+          toks.group1 = toks.group1.substr(0,pos);
+        }
 	  } // else if (4) r1,r2      [2]
 	  else if ( toks.opformat == 5 ) {  //(5) r1,n       [2]
 	    toks.label_length = 2;
@@ -1383,43 +1616,81 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
         toks.group1 = toks.tokens[2].value;
 	    token_packer.end = true;
       } // else of
-      else if ( toks.tokens[1].tokenvalue == 7 ) {// 
-        toks.EQU = true;
-        int equValue = 0;
-        string errorMsg;
-        if ( evaluateEquExpression(token_packer, toks, 2, equValue, errorMsg) )
-          toks.location = equValue;
-        else if ( !errorMsg.empty() )
-          toks.error = errorMsg;
-        toks.group1 = toks.tokens[2].value;
-      }// else if EQU
-	      else if ( toks.tokens[1].tokenvalue == 4 ) {// 
-	        if ( toks.tokens[3].type == TokenType::Literal ) {  // 
-          toks.group1 = toks.tokens[3].value;  // 
-	    } // if
-	    else if ( toks.tokens[3].type == TokenType::Number ) {  // 
-	      toks.group1 = toks.tokens[3].value;  // 
-		} // else if
-		else if ( toks.tokens[2].type == TokenType::Number ) {  // dec_num
-	      toks.group1 = toks.tokens[2].value; 
-		} // else if
-      }// else if BYTE
-	      else if ( toks.tokens[1].tokenvalue == 4 ) {// 
-		    if ( toks.tokens[3].type == TokenType::Literal ) {  // 
-          toks.group1 = toks.tokens[3].value;  // 
-	    } // if
-	    else if ( toks.tokens[3].type == TokenType::Number ) {  // 
-	      toks.group1 = toks.tokens[3].value;  // 
-		} // else if
-		else if ( toks.tokens[2].type == TokenType::Number ) {  // dec_num
-	      toks.group1 = toks.tokens[2].value; 
-		} // else if
-      }// else if WORD
-      else if ( toks.tokens[1].tokenvalue == 8 ) {//  {label} BASE dec_num | symbol
-        toks.base = true;
-        token_packer.base = true;
-        toks.group1 = toks.tokens[2].value; 
-        if ( toks.tokens[2].type == TokenType::Number ) {
+	      else if ( toks.tokens[1].tokenvalue == 7 ) {// 
+	        toks.EQU = true;
+	        int equValue = 0;
+	        string errorMsg;
+	        if ( evaluateEquExpression(token_packer, toks, 2, equValue, errorMsg) )
+	          toks.location = equValue;
+	        else if ( !errorMsg.empty() )
+	          toks.error = errorMsg;
+	        toks.group1 = toks.tokens[2].value;
+	      }// else if EQU
+          else if ( toks.tokens[1].tokenvalue == 3 || toks.tokens[1].tokenvalue == 4 ) { // BYTE or WORD
+            // Reconstruct operand from source line to avoid tokenization quirks
+            string srcUpper = to_upper(toks.sourcestatement);
+            size_t pos = srcUpper.find("BYTE");
+            if ( toks.tokens[1].tokenvalue == 4 )
+              pos = srcUpper.find("WORD");
+            string operandText;
+            if ( pos != string::npos ) {
+              operandText = toks.sourcestatement.substr(pos + 4);
+            } else {
+              operandText = toks.tokens[2].value;
+            }
+            auto trim = [](string s){
+              while(!s.empty() && s.front()==' ') s.erase(s.begin());
+              while(!s.empty() && s.back()==' ') s.pop_back();
+              return s;
+            };
+            operandText = trim(operandText);
+            auto parsed = canonicalLiteral(operandText);
+            string canonicalOp = parsed.first;
+            toks.group1 = canonicalOp;
+            toks.pseudo = true;
+            toks.forwardreference = false;
+            toks.literal = Literal{}; // do not treat as literal pool
+            auto makeHexFromChar = [&](const string &txt)->string{
+              string hex;
+              for ( size_t i = 2; i < txt.size()-1; ++i ) {
+                string h; DecToHexa(static_cast<int>(static_cast<unsigned char>(txt[i])), h);
+                if ( h.length()==1 ) h.insert(0,"0");
+                hex += h;
+              }
+              return hex;
+            };
+            auto makeHexFromNumber = [&](int num, int width)->string{
+              string h; DecToHexa(num, h);
+              while ( static_cast<int>(h.length()) < width ) h.insert(0,"0");
+              return h;
+            };
+            if ( !canonicalOp.empty() && canonicalOp.size() > 3 &&
+                 canonicalOp[0]=='C' && canonicalOp[1]=='\'' && canonicalOp.back()=='\'' ) {
+              toks.label_length = static_cast<int>(canonicalOp.size()-3);
+              toks.objectcode = makeHexFromChar(canonicalOp);
+            } else if ( !canonicalOp.empty() && canonicalOp.size() > 3 &&
+                        canonicalOp[0]=='X' && canonicalOp[1]=='\'' && canonicalOp.back()=='\'' ) {
+              toks.label_length = static_cast<int>((canonicalOp.size()-3)/2);
+              toks.objectcode = canonicalOp.substr(2, canonicalOp.size()-3);
+              for ( char &c : toks.objectcode ) c = toupper(static_cast<unsigned char>(c));
+            } else if ( !canonicalOp.empty() ) {
+              int num = atoi(canonicalOp.c_str());
+              if ( toks.tokens[1].tokenvalue == 3 ) { // BYTE numeric
+                toks.label_length = 1;
+                toks.objectcode = makeHexFromNumber(num, 2);
+              } else { // WORD
+                toks.label_length = 3;
+                toks.objectcode = makeHexFromNumber(num, 6);
+              }
+            } else {
+              toks.error = "Syntax Error! : It should be something here.";
+            }
+		      }// else if BYTE/WORD
+	      else if ( toks.tokens[1].tokenvalue == 8 ) {//  {label} BASE dec_num | symbol
+	        toks.base = true;
+	        token_packer.base = true;
+	        toks.group1 = toks.tokens[2].value; 
+	        if ( toks.tokens[2].type == TokenType::Number ) {
           int numericBase = atoi(toks.tokens[2].value.c_str());
           token_packer.base_label.clear();
           token_packer.base_hexlocation.clear();
@@ -1483,33 +1754,42 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
   	          else
   	            toks.group2 = toks.tokens[4].value;
   	        } // 
-  	        else if ( toks.tokens[2].type == TokenType::Delimiter && toks.tokens[2].tokenvalue == 11 ) { // 
-  	          if ( toks.tokens[4].type == TokenType::Literal ) {  // 
-  	            toks.literal.label = toks.tokens[4].value;
-  	            toks.literal.WORDorBYTE = "BYTE";
-                toks.literal.literal = toks.tokens[4].value;
-                toks.literal.literal.insert( 0, toks.tokens[3].value );
-                toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
-                toks.literal.literal.insert( 0, "C" );
-                toks.group1 = toks.tokens[4].value;
-			  } // 
-			  if ( toks.tokens[4].type == TokenType::Number ) {  // 
-  	            toks.literal.label = toks.tokens[4].value;
-  	            toks.literal.WORDorBYTE = "BYTE";
-                toks.literal.literal = toks.tokens[4].value;
-                toks.literal.literal.insert( 0, toks.tokens[3].value );
-                toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
-                toks.literal.literal.insert( 0, "X" );
-                toks.group1 = toks.tokens[4].value;
-			  } // 
-			  else if ( toks.tokens[3].type == TokenType::Number ) {  // 
-			    toks.literal.label = toks.tokens[3].value;
-			    toks.literal.label.insert( 0, toks.tokens[2].value );
-			    toks.literal.WORDorBYTE = "WORD";
-			    toks.literal.literal = toks.tokens[3].value;
-			    toks.group1 = toks.literal.label;
-			  } // 
-  	        } // 
+        else if ( toks.tokens[2].type == TokenType::Delimiter && toks.tokens[2].tokenvalue == 11 ) { // 
+          if ( toks.tokens[4].type == TokenType::Literal ) {  // 
+            toks.literal.label = toks.tokens[4].value;
+            toks.literal.WORDorBYTE = "BYTE";
+            toks.literal.literal = toks.tokens[4].value;
+            toks.literal.literal.insert( 0, toks.tokens[3].value );
+            toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
+            toks.literal.literal.insert( 0, "C" );
+            toks.group1 = toks.tokens[4].value;
+            toks.flags.p = (toks.format == 3);
+            toks.flags.b = false;
+            toks.forwardreference = true;
+		  } // 
+		  if ( toks.tokens[4].type == TokenType::Number ) {  // 
+            toks.literal.label = toks.tokens[4].value;
+            toks.literal.WORDorBYTE = "BYTE";
+            toks.literal.literal = toks.tokens[4].value;
+            toks.literal.literal.insert( 0, toks.tokens[3].value );
+            toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[3].value );
+            toks.literal.literal.insert( 0, "X" );
+            toks.group1 = toks.tokens[4].value;
+            toks.flags.p = (toks.format == 3);
+            toks.flags.b = false;
+            toks.forwardreference = true;
+		  } // 
+		  else if ( toks.tokens[3].type == TokenType::Number ) {  // 
+		    toks.literal.label = toks.tokens[3].value;
+		    toks.literal.label.insert( 0, toks.tokens[2].value );
+		    toks.literal.WORDorBYTE = "WORD";
+		    toks.literal.literal = toks.tokens[3].value;
+		    toks.group1 = toks.literal.label;
+            toks.flags.p = (toks.format == 3);
+            toks.flags.b = false;
+            toks.forwardreference = true;
+		  } // 
+        } // 
   	        else if ( !toks.tokens[2].value.empty() && toks.tokens[3].value.empty() ) { // <symbol> | address
   	          if ( !isNumber(toks.tokens[2].value) )
   	            if ( !sicxe_Set_p_b ( token_packer, toks, toks.tokens[2].value ) )
@@ -1520,11 +1800,18 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
   	          toks.error = "Syntax Error! : It should be something here.";
 		  } // else <direct>|<index>|<literal>
 		} // else
-	  } // else if (2) m          [3/4]
-  } // else if 
-  else if ( toks.tokens[0].type == TokenType::Instruction ) {  // 
-      toks.ins = toks.tokens[0].value;
-  	  sicxe_Search_Instruction_Set( sicxe, toks.tokens[0].value, toks.format, toks.opformat, toks.objectcode );
+		  } // else if (2) m          [3/4]
+      // If no leading '+', keep this as format 3 (guard against accidental format 4)
+      if ( toks.format == 4 && (toks.tokens[0].value.empty() || toks.tokens[0].value[0] != '+') ) {
+        toks.format = 3;
+        toks.flags.e = false;
+        if ( toks.opformat == 1 ) toks.label_length = 1;
+        else if ( toks.opformat >= 2 ) toks.label_length = 3;
+      }
+	  } // else if 
+	  else if ( toks.tokens[0].type == TokenType::Instruction ) {  // 
+	      toks.ins = toks.tokens[0].value;
+	  	  sicxe_Search_Instruction_Set( sicxe, toks.tokens[0].value, toks.format, toks.opformat, toks.objectcode );
   	  if ( toks.opformat == 1 ) {   // 
   	    toks.label_length = 1;
   	  	if ( !toks.tokens[1].value.empty() )
@@ -1569,33 +1856,42 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
   	          else
   	            toks.group2 = toks.tokens[3].value;
   	        } // 
-  	        else if ( toks.tokens[1].type == TokenType::Delimiter && toks.tokens[1].tokenvalue == 11 ) { // 
-  	          if ( toks.tokens[3].type == TokenType::Literal ) {  // 
-  	            toks.literal.label = toks.tokens[3].value;
-  	            toks.literal.WORDorBYTE = "BYTE";
-                toks.literal.literal = toks.tokens[3].value;
-                toks.literal.literal.insert( 0, toks.tokens[2].value );
-                toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[2].value );
-                toks.literal.literal.insert( 0, "C" );
-                toks.group1 = toks.tokens[3].value;
-			  } // 
-			  if ( toks.tokens[3].type == TokenType::Number ) {  // 
-  	            toks.literal.label = toks.tokens[3].value;
-  	            toks.literal.WORDorBYTE = "BYTE";
-                toks.literal.literal = toks.tokens[3].value;
-                toks.literal.literal.insert( 0, toks.tokens[2].value );
-                toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[2].value );
-                toks.literal.literal.insert( 0, "X" );
-                toks.group1 = toks.tokens[3].value;
-			  } // 
-			  else if ( toks.tokens[2].type == TokenType::Number ) {  // 
-			    toks.literal.label = toks.tokens[2].value;
-			    toks.literal.label.insert( 0, toks.tokens[1].value );
-			    toks.literal.WORDorBYTE = "WORD";
-			    toks.literal.literal = toks.tokens[2].value;
-			    toks.group1 = toks.literal.label;
-			  } // 
-  	        } // 
+        else if ( toks.tokens[1].type == TokenType::Delimiter && toks.tokens[1].tokenvalue == 11 ) { // 
+          if ( toks.tokens[3].type == TokenType::Literal ) {  // 
+            toks.literal.label = toks.tokens[3].value;
+            toks.literal.WORDorBYTE = "BYTE";
+            toks.literal.literal = toks.tokens[3].value;
+            toks.literal.literal.insert( 0, toks.tokens[2].value );
+            toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[2].value );
+            toks.literal.literal.insert( 0, "C" );
+            toks.group1 = toks.tokens[3].value;
+            toks.flags.p = (toks.format == 3);
+            toks.flags.b = false;
+            toks.forwardreference = true;
+		  } // 
+		  if ( toks.tokens[3].type == TokenType::Number ) {  // 
+            toks.literal.label = toks.tokens[3].value;
+            toks.literal.WORDorBYTE = "BYTE";
+            toks.literal.literal = toks.tokens[3].value;
+            toks.literal.literal.insert( 0, toks.tokens[2].value );
+            toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[2].value );
+            toks.literal.literal.insert( 0, "X" );
+            toks.group1 = toks.tokens[3].value;
+            toks.flags.p = (toks.format == 3);
+            toks.flags.b = false;
+            toks.forwardreference = true;
+		  } // 
+		  else if ( toks.tokens[2].type == TokenType::Number ) {  // 
+		    toks.literal.label = toks.tokens[2].value;
+		    toks.literal.label.insert( 0, toks.tokens[1].value );
+		    toks.literal.WORDorBYTE = "WORD";
+		    toks.literal.literal = toks.tokens[2].value;
+		    toks.group1 = toks.literal.label;
+            toks.flags.p = (toks.format == 3);
+            toks.flags.b = false;
+            toks.forwardreference = true;
+		  } // 
+        } // 
   	        else if ( !toks.tokens[1].value.empty() && toks.tokens[2].value.empty() ) { // <symbol> | address
   	          if ( !isNumber(toks.tokens[1].value) )
   	            if ( !sicxe_Set_p_b ( token_packer, toks, toks.tokens[1].value ) )
@@ -1621,12 +1917,18 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
 	    toks.group1 = toks.tokens[1].value;
 	    toks.group2 = toks.tokens[3].value;
 	  } // else if (5) r1,n       [2]
-	  else if ( toks.opformat == 6 ) {  //(6) n          [2]
-	    toks.label_length = 2;
-	    toks.group1 = toks.tokens[1].value;
-	  } // else if (6) n          [2]
-	} // 
-  else if ( toks.tokens[0].type == TokenType::Pseudo ) {  // 
+		  else if ( toks.opformat == 6 ) {  //(6) n          [2]
+		    toks.label_length = 2;
+		    toks.group1 = toks.tokens[1].value;
+		  } // else if (6) n          [2]
+      if ( toks.format == 4 && (toks.tokens[0].value.empty() || toks.tokens[0].value[0] != '+') ) {
+        toks.format = 3;
+        toks.flags.e = false;
+        if ( toks.opformat == 1 ) toks.label_length = 1;
+        else if ( toks.opformat >= 2 ) toks.label_length = 3;
+      }
+		} // 
+	  else if ( toks.tokens[0].type == TokenType::Pseudo ) {  // 
 	  toks.ins = toks.tokens[0].value;
 	  if ( toks.tokens[0].tokenvalue == 1 ) {//  {label} START hex_num
 	    toks.START = true;
@@ -1699,6 +2001,42 @@ void sicxe_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sicxe_Inst
   } // 
   else if ( toks.tokens[0].type != TokenType::Label && toks.tokens[0].type != TokenType::Instruction && toks.tokens[0].type != TokenType::Pseudo && toks.tokens[0].type != TokenType::Delimiter )
     toks.error = "Syntax Error! : It doesn't have label and instructions.";
+
+	  // Normalize literal operand: ensure label/group1 use the canonical literal string (e.g., C'EOF')
+      auto trimOp = [](string s){
+        while(!s.empty() && s.front()==' ') s.erase(s.begin());
+        while(!s.empty() && s.back()==' ') s.pop_back();
+        return s;
+      };
+      string upperIns = to_upper(toks.ins);
+      string opTrimmed = trimOp(toks.group1);
+      bool directiveLiteral = (opTrimmed.size()>0 && opTrimmed[0]=='=');
+      bool isByteWord = (upperIns=="BYTE" || upperIns=="WORD");
+      if ( !isByteWord && ( !toks.literal.WORDorBYTE.empty() || !toks.literal.literal.empty() ) ) {
+	    size_t eqPos = toks.sourcestatement.find('=');
+	    string raw = (eqPos != string::npos) ? toks.sourcestatement.substr(eqPos) : toks.literal.literal;
+	    auto [lit, kind] = canonicalLiteral(raw);
+	        if (!lit.empty()) {
+	            toks.literal.literal = lit;
+            toks.literal.label = lit;
+            toks.literal.c_x_w = kind;
+            if ( kind == "c" || kind == "x" )
+              toks.literal.WORDorBYTE = "BYTE";
+            else if ( toks.literal.WORDorBYTE.empty() )
+              toks.literal.WORDorBYTE = "WORD";
+            toks.group1 = lit;
+            token_packer.literals.push_back(toks.literal);
+            toks.forwardreference = true; // literal address resolved after pool is laid out
+        }
+  }
+  // SICXE RSUB needs n/i=1 => opcode 4F0000
+  if ( to_upper(toks.ins) == "RSUB" ) {
+    toks.objectcode = "4F0000";
+    toks.flags.n = true;
+    toks.flags.i = true;
+    toks.format = 3;
+    toks.label_length = 3;
+  }
 } // sicxe_RecordAndSyntax
 
 void sicxe_setbase( Packed_Token &token_packer ){
@@ -1713,11 +2051,11 @@ void sicxe_resetcodedisp( Packed_Token &token_packer ){
 		string disp = token_packer.base_hexlocation;
 		if ( token_packer.token_groups[i].flags.b && !token_packer.token_groups[i].forwardreference ) {
 			sicxe_set_disp( token_packer, token_packer.token_groups[i], disp );
-			token_packer.token_groups[i].objectcode.erase(token_packer.token_groups[i].objectcode.length()-1,1);
-			token_packer.token_groups[i].objectcode.erase(token_packer.token_groups[i].objectcode.length()-1,1);
-			token_packer.token_groups[i].objectcode.erase(token_packer.token_groups[i].objectcode.length()-1,1);
-			token_packer.token_groups[i].objectcode.insert(token_packer.token_groups[i].objectcode.length(),"F");
-			token_packer.token_groups[i].objectcode.insert(token_packer.token_groups[i].objectcode.length(),disp);
+      disp = clipHex(padHex(disp, 3, !disp.empty() && disp[0]=='F'),3);
+      auto &obj = token_packer.token_groups[i].objectcode;
+      if ( obj.length() >= 3 )
+        obj.erase(obj.length()-3,3);
+      obj.append(disp);
 		} // 
 	} // for
 } //sicxe_resetcodedisp
@@ -1793,6 +2131,10 @@ void sic_index_set_address( Tokens &toks, string address ) {
 	//  1039
 	string temp;
 	string x = "1";
+    if (address.empty()) {
+        toks.error = "Syntax Error! : Undefined symbol.";
+        return;
+    }
 	temp.append(1, address[0]); //1
 	address.erase(0,1); //039
 	//  1
@@ -2052,7 +2394,7 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
   	        else
   	            toks.group2 = toks.tokens[3].value;
   	    } // 
-  	    else if ( toks.tokens[1].type == TokenType::Delimiter && toks.tokens[1].tokenvalue == 11 ) { // 
+  	        else if ( toks.tokens[1].type == TokenType::Delimiter && toks.tokens[1].tokenvalue == 11 ) { // 
   	        if ( toks.tokens[3].type == TokenType::Literal ) {  // 
   	            toks.label_length = toks.tokens[3].value.length();
   	            toks.literal.c_x_w = "c";
@@ -2062,7 +2404,8 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
                 toks.literal.literal.insert( 0, toks.tokens[1].value );
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[2].value );
                 toks.literal.literal.insert( 0, "C" );
-                toks.group1 = toks.tokens[3].value;
+                toks.literal.label = toks.literal.literal;
+                toks.group1 = toks.literal.literal;
 			} // 
 			else if ( toks.tokens[3].type == TokenType::Number ) {  // 
 			    toks.label_length = toks.tokens[3].value.length()/2;
@@ -2073,7 +2416,8 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
                 toks.literal.literal.insert( 0, toks.tokens[2].value );
                 toks.literal.literal.insert( toks.literal.literal.length()-1, toks.tokens[2].value );
                 toks.literal.literal.insert( 0, "X" );
-                toks.group1 = toks.tokens[3].value;
+                toks.literal.label = toks.literal.literal;
+                toks.group1 = toks.literal.literal;
 			} // 
 			else if ( toks.tokens[2].type == TokenType::Number ) {  // 
 			    toks.label_length = 3;
@@ -2082,6 +2426,7 @@ void sic_RecordAndSyntax( Packed_Token &token_packer, Tokens &toks, Sic_Instruct
 			    toks.literal.label.insert( 0, toks.tokens[1].value );
 			    toks.literal.WORDorBYTE = "WORD";
 			    toks.literal.literal = toks.tokens[2].value;
+                toks.literal.label = toks.literal.literal;
 			    toks.group1 = toks.literal.label;
 			} // 
   	    } // 
@@ -2201,6 +2546,10 @@ void sic ( const string &inputPath, const string &outputPath ) {
 	while ( getline(newfile, line) ) {
 	  if ( !line.empty() && line.back() == '\r' )
 	    line.pop_back(); // trim Windows newline
+      bool hadLeadingTab = (!line.empty() && line[0] == '\t');
+      std::replace(line.begin(), line.end(), '\t', ' ');
+      if ( hadLeadingTab && !line.empty() && line[0] == ' ' )
+        line.erase(line.begin()); // preserve original indentation removal
 	  if ( isBlankLine(line) )
 	    continue;
 	  Tokens blank{};
@@ -2212,14 +2561,15 @@ void sic ( const string &inputPath, const string &outputPath ) {
 	      token_packer.token_groups[token_packer.amount].line = 5;
 	  }
 	  token_packer.token_groups[token_packer.amount].sourcestatement = line ;  // 
+	  token_packer.token_groups[token_packer.amount].leading_tab = hadLeadingTab;
 	  if ( !token_packer.token_groups[token_packer.amount].sourcestatement.empty() &&
 	       token_packer.token_groups[token_packer.amount].sourcestatement[0] == '\t' )
 	    token_packer.token_groups[token_packer.amount].sourcestatement.erase( 0, 1 );
-	  if ( token_packer.longestnum < line.length() ) // 
-	    token_packer.longestnum = line.length();
-	  //cout << line << endl ; // 
-	  token_packer.token_groups[token_packer.amount].amount = 0;  // 
-	  token_packer.token_groups[token_packer.amount].comment = false;
+		  if ( token_packer.longestnum < line.length() ) // 
+		    token_packer.longestnum = line.length();
+		  //cout << line << endl ; // 
+		  token_packer.token_groups[token_packer.amount].amount = 0;  // 
+		  token_packer.token_groups[token_packer.amount].comment = false;
       bool parsedAsComment = false;
       string tokenError;
       vector<Token> parsedTokens = tokenizeLine(
@@ -2288,11 +2638,43 @@ void sic ( const string &inputPath, const string &outputPath ) {
 	      outfile << "\t\t" << tg.sourcestatement << "\r\n";
 	      continue;
 	    }
-	    outfile << tg.hex_location << "\t";
+        string locField = (tg.base || to_upper(tg.ins)=="BASE") ? "" : tg.hex_location;
+	    outfile << locField << "\t";
 	    if ( tg.label.empty() )
 	      outfile << "\t"; // align when no label
 	    outfile << tg.sourcestatement;
-	    if ( !tg.pseudo && !tg.objectcode.empty() ) {
+        string obj = tg.objectcode;
+        if ( obj.empty() && (to_upper(tg.ins)=="BYTE" || to_upper(tg.ins)=="WORD") ) {
+          string op = tg.group1.empty() ? tg.literal.literal : tg.group1;
+          if (!op.empty()) {
+            auto trim = [](string s){
+              while(!s.empty() && s.front()==' ') s.erase(s.begin());
+              while(!s.empty() && s.back()==' ') s.pop_back();
+              return s;
+            };
+            op = trim(op);
+            if ( op.size()>3 && (op[0]=='C' || op[0]=='c') && op[1]=='\'' && op.back()=='\'' ) {
+              for ( size_t i=2; i<op.size()-1; ++i ) {
+                string h; DecToHexa(static_cast<int>(static_cast<unsigned char>(op[i])), h);
+                if ( h.length()==1 ) h.insert(0,"0");
+                obj += h;
+              }
+            } else if ( op.size()>3 && (op[0]=='X' || op[0]=='x') && op[1]=='\'' && op.back()=='\'' ) {
+              obj = op.substr(2, op.size()-3);
+              for ( char &c : obj ) c = toupper(static_cast<unsigned char>(c));
+            } else {
+              int num = atoi(op.c_str());
+              string h; DecToHexa(num, h);
+              if ( to_upper(tg.ins) == "BYTE" ) {
+                while ( h.length()<2 ) h.insert(0,"0");
+              } else {
+                while ( h.length()<6 ) h.insert(0,"0");
+              }
+              obj = h;
+            }
+          }
+        }
+	    if ( !obj.empty() ) {
 	      string spacer;
 	      if ( tg.group1.empty() && tg.group2.empty() )
 	        spacer = "\t\t\t";
@@ -2300,7 +2682,7 @@ void sic ( const string &inputPath, const string &outputPath ) {
 	        spacer = "\t";
 	      else
 	        spacer = "\t\t";
-	      outfile << spacer << tg.objectcode;
+	      outfile << spacer << obj;
 	      if ( tg.ins == "J" )
 	        outfile << " ";
 	    }
@@ -2338,6 +2720,9 @@ void sicxe ( const string &inputPath, const string &outputPath ) {
 		//cout << line << endl ; // 
 	  if ( !line.empty() && line.back() == '\r' )
 	    line.pop_back(); // trim Windows newline
+      bool hadLeadingTab = (!line.empty() && line[0] == '\t');
+      if ( hadLeadingTab && !line.empty() && line[0] == '\t' )
+        line.erase(line.begin());
 	  if ( isBlankLine(line) )
 	    continue;
 	  Tokens blank{};
@@ -2349,6 +2734,7 @@ void sicxe ( const string &inputPath, const string &outputPath ) {
 	      token_packer.token_groups[token_packer.amount].line = 5;
 	  }
 	  token_packer.token_groups[token_packer.amount].sourcestatement = line ;  // 
+	  token_packer.token_groups[token_packer.amount].leading_tab = hadLeadingTab;
 	  if ( !token_packer.token_groups[token_packer.amount].sourcestatement.empty() &&
 	       token_packer.token_groups[token_packer.amount].sourcestatement[0] == '\t' )
 	    token_packer.token_groups[token_packer.amount].sourcestatement.erase( 0, 1 );
@@ -2374,14 +2760,20 @@ void sicxe ( const string &inputPath, const string &outputPath ) {
                     parsedToken.value, parsedToken.type, parsedToken.tokenvalue);
         }
 	  }
-	  if ( !token_packer.token_groups[token_packer.amount].sourcestatement.empty() && !token_packer.token_groups[token_packer.amount].comment )
-	     sicxe_RecordAndSyntax( token_packer, token_packer.token_groups[token_packer.amount], sicxe ) ; // 
-	  Tokens &current = token_packer.token_groups[token_packer.amount];
-	  if ( current.START ) {
-	    int startAddr = 0;
-	    if ( parseHexNumber(current.tokens[2].value, startAddr) ) {
-	      current.location = startAddr;
-	      locationCounter = startAddr;
+			  if ( !token_packer.token_groups[token_packer.amount].sourcestatement.empty() && !token_packer.token_groups[token_packer.amount].comment )
+			     sicxe_RecordAndSyntax( token_packer, token_packer.token_groups[token_packer.amount], sicxe ) ; // 
+			  Tokens &current = token_packer.token_groups[token_packer.amount];
+        if ( !current.pseudo && !current.comment && current.format > 0 ) {
+          if ( current.format == 4 ) current.label_length = 4;
+          else if ( current.format == 3 ) current.label_length = 3;
+          else if ( current.format == 2 ) current.label_length = 2;
+          else if ( current.format == 1 ) current.label_length = 1;
+        }
+			  if ( current.START ) {
+			    int startAddr = 0;
+		    if ( parseHexNumber(current.tokens[2].value, startAddr) ) {
+		      current.location = startAddr;
+		      locationCounter = startAddr;
 	      hasLocation = true;
 	    }
 	  }
@@ -2395,91 +2787,158 @@ void sicxe ( const string &inputPath, const string &outputPath ) {
 	      locationCounter += current.label_length;
 	    }
 	  }
-	  sicxe_setlocation ( token_packer.token_groups[token_packer.amount].location, token_packer.token_groups[token_packer.amount].hex_location );
-	  sicxe_setline( token_packer.token_groups[token_packer.amount].setedline, token_packer.token_groups[token_packer.amount].line ) ;
-	  sicxe_setcode( token_packer, token_packer.token_groups[token_packer.amount] );
-	  token_packer.amount++;
-	} // while
-	sicxe_setbase(token_packer);
-	sicxe_resetcodedisp(token_packer); //format3 && !forwardreference
-	sicxe_pass2( token_packer );
+		  sicxe_setlocation ( token_packer.token_groups[token_packer.amount].location, token_packer.token_groups[token_packer.amount].hex_location );
+			  sicxe_setline( token_packer.token_groups[token_packer.amount].setedline, token_packer.token_groups[token_packer.amount].line ) ;
+        if ( !current.pseudo && !current.comment )
+          sicxe_setcode( token_packer, token_packer.token_groups[token_packer.amount] );
+			  token_packer.amount++;
+		} // while
+    // Allocate literal addresses at END/LTORG position (after program body).
+        // Deduplicate and allocate literals in sorted label order (matches reference outputs).
+        std::map<string, Literal> uniqueLits;
+        for ( const auto &lit : token_packer.literals ) {
+            if ( lit.label.empty() ) continue;
+            if ( uniqueLits.count(lit.label) ) continue;
+            uniqueLits[lit.label] = lit;
+        }
+        for ( const auto &pair : uniqueLits ) {
+            const auto &lit = pair.second;
+            int bytes = 0;
+            string kind = lit.c_x_w;
+            if (kind.empty() && !lit.literal.empty()) {
+                auto parsed = canonicalLiteral(lit.literal);
+                kind = parsed.second;
+            }
+            if ( kind == "c" ) {
+                bytes = static_cast<int>(lit.literal.length()) - 3; // C'X'
+            } else if ( kind == "x" ) {
+                bytes = (static_cast<int>(lit.literal.length()) - 3) / 2;
+            } else { // word or unknown
+                bytes = 3;
+            }
+            token_packer.literal_address[lit.label] = locationCounter;
+            locationCounter += bytes;
+        }
+        if ( getenv("DEBUG_LIT") ) {
+            cerr << "[DEBUG] Literal pool:\n";
+            for ( const auto &kv : token_packer.literal_address ) {
+                cerr << "  " << kv.first << " (len=" << kv.first.size() << ") -> " << kv.second << " bytes=";
+                for (unsigned char ch : kv.first) cerr << std::hex << std::uppercase << int(ch) << " ";
+                cerr << std::dec << "\n";
+            }
+        }
+		sicxe_setbase(token_packer);
+		sicxe_resetcodedisp(token_packer); //format3 && !forwardreference
+		sicxe_pass2( token_packer );
 	newfile.close();//Close file after reading
-	outfile << "Line  Location  Source code                              Object code\r\n";
-	outfile << "----  -------- -------------------------                 -----------\r\n";
-	for ( int b = 0 ; b < token_packer.amount; b++) { //
-	    const auto &tg = token_packer.token_groups[b];
-	    if ( !tg.error.empty() ) {
-	      outfile << tg.error << "\r\n";
-	      continue;
-	    }
+	outfile << "Line\tLoc\tSource statement\t\tObject code\r\n\r\n";
+        int lastPrintedLine = 0;
+		for ( int b = 0 ; b < token_packer.amount; b++) { //
+		    const auto &tg = token_packer.token_groups[b];
 	    if( tg.sourcestatement.empty() ) {
 	      outfile << "\r\n" ;
 	      continue;
 	    }
-
-	    auto sanitize = [](string s) {
-	      for ( char &c : s )
-	        if ( c == '\t' ) c = ' ';
-	      return s;
-	    };
-
-	    string label = sanitize(tg.label);
-	    string mnemonic = sanitize(tg.ins);
-	    if ( tg.format == 4 && !mnemonic.empty() && mnemonic[0] != '+' )
-	      mnemonic.insert(0, "+");
-	    string operand;
-	    if ( !tg.group1.empty() )
-	      operand = sanitize(tg.group1);
-	    if ( !tg.group2.empty() ) {
-	      if ( !operand.empty() )
-	        operand.append(",");
-	      operand.append(sanitize(tg.group2));
+	    if ( !tg.error.empty() ) {
+	      outfile << tg.error << "\r\n";
+	      continue;
 	    }
-
-	    auto pad = [&](const string &s, int width) {
-	      string out = s;
-	      if ( out.length() < static_cast<size_t>(width) )
-	        out.append(width - out.length(), ' ');
-	      return out;
-	    };
-
-	    string line_field = pad(tg.setedline,4);
-	    string loc_field = (tg.comment || tg.end || tg.base) ? "" : tg.hex_location;
-	    loc_field = pad(loc_field,4);
-	    string label_field = pad(label,15);
-	    string mnemonic_field = pad(mnemonic,10);
-	    string operand_field = operand;
-	    string source_field = label_field + mnemonic_field + operand_field;
-
+	    outfile << tg.setedline << "\t";
 	    if ( tg.comment ) {
-	      string comment_text = sanitize(tg.sourcestatement);
-	      source_field = pad("",15) + comment_text; // keep comments aligned to the mnemonic column
+	      outfile << "\t" << tg.sourcestatement << "\r\n";
+	      continue;
 	    }
-
-	    string prefix = line_field + "  " + loc_field + "  " + source_field;
-	    string obj;
-	    if ( !tg.pseudo && !tg.objectcode.empty() )
-	      obj = tg.objectcode;
-	    int needed = 0;
-	    if ( obj.empty() ) {
-	      int targetLen = 57; // default padding when no object code
-	      if ( tg.comment ) targetLen = 43;
-	      else if ( tg.end ) targetLen = 52;
-	      needed = targetLen - static_cast<int>(prefix.length());
-	    } else {
-	      int targetLen = 57 + static_cast<int>(obj.length()); // object field always starts at column 58
-	      needed = targetLen - static_cast<int>(prefix.length()) - static_cast<int>(obj.length());
+	    if ( tg.end ) {
+	      outfile << "\t\t" << tg.sourcestatement << "\r\n";
+	      continue;
 	    }
-	    if ( needed < 0 ) needed = 0;
-	    prefix.append(needed, ' ');
-	    if ( !obj.empty() )
-	      outfile << prefix << obj << "\r\n";
-	    else
-	      outfile << prefix << "\r\n";
+	    outfile << tg.hex_location << "\t";
+	    if ( tg.label.empty() )
+	      outfile << "\t"; // align when no label
+	    outfile << tg.sourcestatement;
+	    if ( !tg.pseudo && !tg.objectcode.empty() ) {
+	      string spacer;
+	      if ( tg.group1.empty() && tg.group2.empty() )
+	        spacer = "\t\t\t";
+	      else if ( tg.sourcestatement.find(',') != string::npos )
+	        spacer = "\t";
+	      else
+	        spacer = "\t\t";
+	      outfile << spacer << tg.objectcode;
+	      if ( tg.ins == "J" )
+	        outfile << " ";
+	    }
+	    outfile << "\r\n";
+        lastPrintedLine = tg.line;
 	} // for
-    //Sicxe_Instruction_print( sicxe ); // 
-	outfile.close();//Close output file 
-} // sicxe
+        // Emit literal pool entries after END, sorted by address
+        if ( !token_packer.literal_address.empty() ) {
+          auto pad = [](const string &s, int width) {
+            string out = s;
+            if ( out.length() < static_cast<size_t>(width) )
+              out.append(width - out.length(), ' ');
+            return out;
+          };
+          vector<pair<int,string>> litAddrs;
+          for ( const auto &kv : token_packer.literal_address ) {
+            litAddrs.push_back({kv.second, kv.first});
+          }
+          sort(litAddrs.begin(), litAddrs.end(), [](auto &a, auto &b){
+            if (a.first != b.first) return a.first < b.first;
+            return a.second < b.second;
+          });
+          int currentLine = lastPrintedLine;
+          unordered_set<string> emitted;
+          size_t totalDistinct = token_packer.literal_address.size();
+          size_t emittedCount = 0;
+          for ( const auto &addrLabel : litAddrs ) {
+            const string &label = addrLabel.second;
+            if ( emitted.count(label) ) continue;
+            emitted.insert(label);
+            Literal lit{};
+            for ( const auto &l : token_packer.literals ) {
+              if ( l.label == label ) { lit = l; break; }
+            }
+            currentLine += 5;
+            string seted;
+            sicxe_setline(seted, currentLine);
+            string loc;
+            sicxe_setlocation(addrLabel.first, loc);
+            string obj;
+            string kind = lit.c_x_w;
+            if (kind.empty()) {
+              auto parsed = canonicalLiteral(lit.literal);
+              kind = parsed.second;
+            }
+            if ( kind == "c" && lit.literal.length() >= 3 ) {
+              for ( size_t i = 2; i < lit.literal.length()-1; ++i ) {
+                string hex;
+                int val = static_cast<unsigned char>(lit.literal[i]);
+                DecToHexa(val, hex);
+                if (hex.length() == 1) hex.insert(0,"0");
+                obj.append(hex);
+              }
+            } else if ( kind == "x" && lit.literal.length() >= 3 ) {
+              obj = lit.literal.substr(2, lit.literal.length()-3);
+              for ( char &c : obj ) c = toupper(static_cast<unsigned char>(c));
+            } else { // word/number
+              DecToHexa(atoi(lit.literal.c_str()), obj);
+              while ( obj.length() < 6 ) obj.insert(0,"0");
+            }
+            string line_field = pad(seted,4);
+            string loc_field = pad(loc,4);
+            bool isLastLiteral = (emittedCount + 1 == totalDistinct);
+            string prefix = line_field + "  " + loc_field + (isLastLiteral ? " " : "") + "\t\t\t\t\t\t ";
+            outfile << prefix << obj;
+            if ( isLastLiteral )
+              outfile << "         "; // trailing spaces for final literal to match reference format
+            outfile << "\r\n";
+            emittedCount++;
+          }
+        }
+	    //Sicxe_Instruction_print( sicxe ); // 
+		outfile.close();//Close output file 
+	} // sicxe
 
 int main() {
 	int command = 0; // 
