@@ -1727,25 +1727,27 @@ void sicxe_pass2( Packed_Token &token_packer ){
 		string address;
 		//cout << token_packer.token_groups[i].ins << token_packer.token_groups[i].forwardreference <<endl ; // 
 		if ( token_packer.token_groups[i].forwardreference ) {
+			string &obj = token_packer.token_groups[i].objectcode;
 			if ( token_packer.token_groups[i].format == 4 ) {
-			  token_packer.token_groups[i].objectcode.erase(token_packer.token_groups[i].objectcode.length()-1,1);
-			  token_packer.token_groups[i].objectcode.erase(token_packer.token_groups[i].objectcode.length()-1,1);
-			  token_packer.token_groups[i].objectcode.erase(token_packer.token_groups[i].objectcode.length()-1,1);
-			  token_packer.token_groups[i].objectcode.erase(token_packer.token_groups[i].objectcode.length()-1,1);
+			  if ( obj.length() >= 4 )
+			    obj.erase(obj.length()-4,4);
+			  else
+			    obj.clear();
 				sicxe_set_address( token_packer, token_packer.token_groups[i], address );
-			    token_packer.token_groups[i].objectcode.insert(token_packer.token_groups[i].objectcode.length(),address);
+			  obj.insert(obj.length(),address);
 			}
-			if ( token_packer.token_groups[i].format == 3 ) {
+			else if ( token_packer.token_groups[i].format == 3 ) {
 			  string disp ;
 			  sicxe_set_disp( token_packer, token_packer.token_groups[i], disp );
-			  token_packer.token_groups[i].objectcode.erase(token_packer.token_groups[i].objectcode.length()-1,1);
-			  token_packer.token_groups[i].objectcode.erase(token_packer.token_groups[i].objectcode.length()-1,1);
-			  token_packer.token_groups[i].objectcode.erase(token_packer.token_groups[i].objectcode.length()-1,1);
+			  if ( obj.length() >= 3 )
+			    obj.erase(obj.length()-3,3);
+			  else
+			    obj.clear();
 			  if ( disp.length() == 1 )
-		  	    token_packer.token_groups[i].objectcode.insert(token_packer.token_groups[i].objectcode.length(),"00");
+		  	    obj.insert(obj.length(),"00");
 		  	  else if ( disp.length() == 2 )
-		  	    token_packer.token_groups[i].objectcode.insert(token_packer.token_groups[i].objectcode.length(),"0");
-			  token_packer.token_groups[i].objectcode.insert(token_packer.token_groups[i].objectcode.length(),disp);
+		  	    obj.insert(obj.length(),"0");
+			  obj.insert(obj.length(),disp);
 			}
 		} // if
 	} // for
