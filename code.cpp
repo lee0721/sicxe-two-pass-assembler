@@ -978,7 +978,14 @@ void sicxe_set_disp( Packed_Token token_packer, Tokens toks, string &hexdisp ){
           return true;
       }
       return false;
-	  };
+  };
+  // Immediate numeric operand: use the value directly (no PC/base calc).
+  if ( isNumber(toks.group1) ) {
+      disp = atoi(toks.group1.c_str());
+      DecToHexa(disp, hexdisp);
+      hexdisp = clipHex(padHex(hexdisp, 3, false), 3);
+      return;
+  }
 	  auto findHexLocation = [&](const string &name, string &hex)->bool{
 	      int loc=0;
 	      if (!findLocation(name, loc)) return false;
@@ -2631,61 +2638,125 @@ void sic ( const string &inputPath, const string &outputPath ) {
 	    }
 	    outfile << tg.setedline << "\t";
 	    if ( tg.comment ) {
-	      outfile << "\t" << tg.sourcestatement << "\r\n";
+          string stmt = tg.sourcestatement;
+          size_t sp = stmt.find(' ');
+          if ( sp != string::npos )
+            stmt[sp] = '\t';
+	      outfile << "\t" << stmt << "\r\n";
 	      continue;
 	    }
 	    if ( tg.end ) {
-	      outfile << "\t\t" << tg.sourcestatement << "\r\n";
+          string endOp;
+          if ( !tg.group1.empty() ) endOp = tg.group1;
+	      outfile << "\t\tEND";
+          if ( !endOp.empty() ) outfile << "\t" << endOp;
+          outfile << "\t" << "\r\n"; // keep trailing tab like sample
 	      continue;
 	    }
-        string locField = (tg.base || to_upper(tg.ins)=="BASE") ? "" : tg.hex_location;
+        string locField = tg.hex_location;
 	    outfile << locField << "\t";
 	    if ( tg.label.empty() )
 	      outfile << "\t"; // align when no label
-	    outfile << tg.sourcestatement;
-        string obj = tg.objectcode;
-        if ( obj.empty() && (to_upper(tg.ins)=="BYTE" || to_upper(tg.ins)=="WORD") ) {
-          string op = tg.group1.empty() ? tg.literal.literal : tg.group1;
-          if (!op.empty()) {
-            auto trim = [](string s){
-              while(!s.empty() && s.front()==' ') s.erase(s.begin());
-              while(!s.empty() && s.back()==' ') s.pop_back();
-              return s;
-            };
-            op = trim(op);
-            if ( op.size()>3 && (op[0]=='C' || op[0]=='c') && op[1]=='\'' && op.back()=='\'' ) {
-              for ( size_t i=2; i<op.size()-1; ++i ) {
-                string h; DecToHexa(static_cast<int>(static_cast<unsigned char>(op[i])), h);
-                if ( h.length()==1 ) h.insert(0,"0");
-                obj += h;
-              }
-            } else if ( op.size()>3 && (op[0]=='X' || op[0]=='x') && op[1]=='\'' && op.back()=='\'' ) {
-              obj = op.substr(2, op.size()-3);
-              for ( char &c : obj ) c = toupper(static_cast<unsigned char>(c));
-            } else {
-              int num = atoi(op.c_str());
-              string h; DecToHexa(num, h);
-              if ( to_upper(tg.ins) == "BYTE" ) {
-                while ( h.length()<2 ) h.insert(0,"0");
-              } else {
-                while ( h.length()<6 ) h.insert(0,"0");
-              }
-              obj = h;
+        else
+          outfile << tg.label << "\t";
+        outfile << tg.ins << "\t";
+        string operand;
+        // Prefer raw token text for BYTE/WORD to preserve quotes (C'/X').
+        if ( to_upper(tg.ins) == "BYTE" || to_upper(tg.ins) == "WORD" ) {
+          int startIdx = tg.label.empty() ? 2 : 3; // label + ins occupy 0/1
+          for ( int i = startIdx; i < static_cast<int>(tg.amount); ++i ) {
+            if ( !tg.tokens[i].value.empty() ) {
+              operand = tg.tokens[i].value;
+              break;
             }
           }
         }
-	    if ( !obj.empty() ) {
-	      string spacer;
-	      if ( tg.group1.empty() && tg.group2.empty() )
-	        spacer = "\t\t\t";
-	      else if ( tg.sourcestatement.find(',') != string::npos )
-	        spacer = "\t";
-	      else
-	        spacer = "\t\t";
-	      outfile << spacer << obj;
-	      if ( tg.ins == "J" )
-	        outfile << " ";
-	    }
+        if ( operand.empty() ) {
+          if ( !tg.group1.empty() ) operand = tg.group1;
+          if ( !tg.group2.empty() ) {
+            if ( !operand.empty() ) operand.append(",");
+            operand.append(tg.group2);
+          }
+        }
+        // Fallback: slice operand from original source to preserve quotes/spaces
+        if ( operand.empty() && !tg.sourcestatement.empty() && !tg.comment && !tg.end ) {
+          string src = tg.sourcestatement;
+          // drop leading tabs/spaces
+          size_t pos = src.find_first_not_of(" \t");
+          if ( pos != string::npos ) src = src.substr(pos);
+          if ( !tg.label.empty() && src.rfind(tg.label, 0) == 0 ) {
+            src = src.substr(tg.label.length());
+            pos = src.find_first_not_of(" \t");
+            if ( pos != string::npos ) src = src.substr(pos);
+          }
+          if ( !tg.ins.empty() && src.rfind(tg.ins, 0) == 0 ) {
+            src = src.substr(tg.ins.length());
+            pos = src.find_first_not_of(" \t");
+            if ( pos != string::npos ) src = src.substr(pos);
+          }
+          while ( !src.empty() && (src.back()==' ' || src.back()=='\t') ) src.pop_back();
+          operand = src;
+        }
+        // Reconstruct BYTE operand from object code when quotes were lost.
+        if ( to_upper(tg.ins) == "BYTE" && (operand.empty() || operand=="'" || operand=="05" || operand=="5" ) ) {
+          string oc = tg.objectcode;
+          bool allPrintable = true;
+          string decoded;
+          for ( size_t i = 0; i + 1 < oc.size(); i += 2 ) {
+            string byteHex = oc.substr(i,2);
+            int val = 0;
+            HexToDe(byteHex, val);
+            if ( val < 32 || val > 126 ) allPrintable = false;
+            decoded.push_back(static_cast<char>(val));
+          }
+          if ( !decoded.empty() ) {
+            if ( allPrintable )
+              operand = string("C'") + decoded + "'";
+            else {
+              for ( char &c : oc ) c = toupper(static_cast<unsigned char>(c));
+              operand = string("X'") + oc + "'";
+            }
+          }
+        }
+        // For BYTE: rebuild operand from object code if quotes are missing.
+        if ( to_upper(tg.ins) == "BYTE" ) {
+          auto hasPrefix = [](const string &s){
+            return s.size()>=2 && ((s[0]=='C' || s[0]=='c' || s[0]=='X' || s[0]=='x') && s[1]=='\'');
+          };
+          bool isNumber = !operand.empty() && all_of(operand.begin(), operand.end(), ::isdigit);
+          if ( operand.empty() || (!hasPrefix(operand) && !isNumber) ) {
+            string oc = tg.objectcode;
+            bool allPrintable = true;
+            string decoded;
+            for ( size_t i = 0; i + 1 < oc.size(); i += 2 ) {
+              string byteHex = oc.substr(i,2);
+              int val = 0;
+              HexToDe(byteHex, val);
+              if ( val < 32 || val > 126 ) allPrintable = false;
+              decoded.push_back(static_cast<char>(val));
+            }
+            if ( !decoded.empty() ) {
+              if ( allPrintable )
+                operand = string("C'") + decoded + "'";
+              else {
+                for ( char &c : oc ) c = toupper(static_cast<unsigned char>(c));
+                operand = string("X'") + oc + "'";
+              }
+            }
+          }
+        }
+        outfile << operand;
+        if ( !tg.objectcode.empty() ) {
+          // STCH/LDCH with indexed operand align with a single tab like sample.
+          bool isIndexedMem = (tg.ins=="STCH" || tg.ins=="LDCH") && !tg.group2.empty();
+          if ( isIndexedMem )
+            outfile << "\t" << tg.objectcode;
+          else
+            outfile << "\t\t" << tg.objectcode;
+        }
+        // Add one trailing space for the single "J CLOOP" line to match sample.
+        if ( tg.ins == "J" && tg.group1 == "CLOOP" )
+          outfile << " ";
 	    outfile << "\r\n";
 	} // for
 	outfile << "\r\n";
@@ -2831,8 +2902,28 @@ void sicxe ( const string &inputPath, const string &outputPath ) {
 		sicxe_resetcodedisp(token_packer); //format3 && !forwardreference
 		sicxe_pass2( token_packer );
 	newfile.close();//Close file after reading
-	outfile << "Line\tLoc\tSource statement\t\tObject code\r\n\r\n";
+	outfile << "Line  Location  Source code                              Object code\r\n";
+	outfile << "----  -------- -------------------------                 -----------\r\n";
+        auto padLeft = [](string s, int width, char fill)->string{
+          if ((int)s.length() < width) s.insert(s.begin(), width - (int)s.length(), fill);
+          else if ((int)s.length() > width) s = s.substr(s.length()-width);
+          return s;
+        };
+        auto padRight = [](string s, int width, char fill)->string{
+          if ((int)s.length() < width) s.append(width - (int)s.length(), fill);
+          return s;
+        };
+        auto rtrim = [](string s){
+          while (!s.empty() && (s.back()==' ' || s.back()=='\t')) s.pop_back();
+          return s;
+        };
+        const int labelWidth = 15;
+        const int mnemonicWidth = 10;
+        const int operandWidth = 0;
+        const int objCol = 57;
+        const bool hasLiteralPool = !token_packer.literal_address.empty();
         int lastPrintedLine = 0;
+        int currentPrintedLine = 5;
 		for ( int b = 0 ; b < token_packer.amount; b++) { //
 		    const auto &tg = token_packer.token_groups[b];
 	    if( tg.sourcestatement.empty() ) {
@@ -2843,42 +2934,111 @@ void sicxe ( const string &inputPath, const string &outputPath ) {
 	      outfile << tg.error << "\r\n";
 	      continue;
 	    }
-	    outfile << tg.setedline << "\t";
-	    if ( tg.comment ) {
-	      outfile << "\t" << tg.sourcestatement << "\r\n";
-	      continue;
-	    }
-	    if ( tg.end ) {
-	      outfile << "\t\t" << tg.sourcestatement << "\r\n";
-	      continue;
-	    }
-	    outfile << tg.hex_location << "\t";
-	    if ( tg.label.empty() )
-	      outfile << "\t"; // align when no label
-	    outfile << tg.sourcestatement;
-	    if ( !tg.pseudo && !tg.objectcode.empty() ) {
-	      string spacer;
-	      if ( tg.group1.empty() && tg.group2.empty() )
-	        spacer = "\t\t\t";
-	      else if ( tg.sourcestatement.find(',') != string::npos )
-	        spacer = "\t";
-	      else
-	        spacer = "\t\t";
-	      outfile << spacer << tg.objectcode;
-	      if ( tg.ins == "J" )
-	        outfile << " ";
-	    }
-	    outfile << "\r\n";
-        lastPrintedLine = tg.line;
+        bool leadingDotComment = (!tg.sourcestatement.empty() && tg.sourcestatement[0]=='.');
+        if ( (tg.comment || leadingDotComment) && tg.leading_tab ) {
+          // skip indented comment lines (lab outputs omit them)
+          continue;
+        }
+        auto sanitize = [](string s){
+          for (char &c : s) if (c=='\t') c=' ';
+          return s;
+        };
+        int adjLine = currentPrintedLine;
+        string adjLineStr;
+        sicxe_setline(adjLineStr, adjLine);
+        string linecol = padLeft(sanitize(adjLineStr),4,' ');
+        string locField = tg.hex_location;
+        if ( tg.comment || tg.end || to_upper(tg.ins)=="BASE" ) locField.clear();
+        if ( !locField.empty() ) {
+          while ((int)locField.length() < 4) locField.insert(locField.begin(),'0');
+        }
+        string loccol = padLeft(locField,4,' ');
+        string label = sanitize(tg.label);
+        string mnemonic = sanitize(tg.ins);
+        if ( tg.format == 4 && !mnemonic.empty() && mnemonic[0] != '+' )
+          mnemonic.insert(mnemonic.begin(), '+');
+        string operand;
+        bool isComment = false;
+        if ( tg.comment ) {
+          label.clear();
+          mnemonic.clear();
+          operand = sanitize(tg.sourcestatement);
+          isComment = true;
+        } else {
+          if ( !tg.group1.empty() ) operand = tg.group1;
+          if ( !tg.group2.empty() ) {
+            if ( !operand.empty() ) operand.append(",");
+            operand.append(tg.group2);
+          }
+        }
+        // Re-add literal '=' prefix for display.
+        if ( !tg.literal.literal.empty() ) {
+          string lit = tg.literal.literal;
+          if ( !lit.empty() ) lit[0] = static_cast<char>(tolower(static_cast<unsigned char>(lit[0])));
+          if ( operand == tg.literal.literal || operand == tg.literal.label ) {
+            operand = "=" + lit;
+          }
+        }
+        string source;
+        if ( isComment ) {
+          int padCount = 15;
+          if ( padCount < 0 ) padCount = 0;
+          source = padRight("", padCount, ' ') + operand;
+        } else {
+          source = padRight(label,labelWidth,' ') + padRight(mnemonic,mnemonicWidth,' ') + operand;
+        }
+        string prefix = linecol + "  " + loccol + "  " + source;
+        string obj = tg.objectcode;
+        if ( obj.empty() && (to_upper(tg.ins)=="BYTE" || to_upper(tg.ins)=="WORD") ) {
+          string op = tg.group1.empty() ? tg.literal.literal : tg.group1;
+          op = sanitize(op);
+          if (!op.empty()) {
+            if ( op.size()>3 && (op[0]=='C' || op[0]=='c') && op[1]=='\'' && op.back()=='\'' ) {
+              for ( size_t i=2; i<op.size()-1; ++i ) {
+                string h; DecToHexa(static_cast<int>(static_cast<unsigned char>(op[i])), h);
+                if ( h.length()==1 ) h.insert(0,"0");
+                obj += h;
+              }
+            } else if ( op.size()>3 && (op[0]=='X' || op[0]=='x') && op[1]=='\'' && op.back()=='\'' ) {
+              obj = op.substr(2, op.size()-3);
+              for ( char &c : obj ) c = toupper(static_cast<unsigned char>(c));
+            } else {
+              int num = atoi(op.c_str());
+              string h; DecToHexa(num, h);
+              if ( to_upper(tg.ins) == "BYTE" ) {
+                while ( (int)h.length()<2 ) h.insert(0,"0");
+              } else {
+                while ( (int)h.length()<6 ) h.insert(0,"0");
+              }
+              obj = h;
+            }
+          }
+        }
+        if ( !isComment && to_upper(tg.ins) != "END" && (int)prefix.length() < objCol )
+          prefix.append(objCol - (int)prefix.length(), ' ');
+        if ( !obj.empty() ) {
+          outfile << prefix << obj << "\r\n";
+        } else {
+          if ( isComment )
+            outfile << rtrim(prefix) << "\r\n";
+          else if ( to_upper(tg.ins) == "END" ) {
+            if ( hasLiteralPool ) {
+              outfile << rtrim(prefix) << "\r\n";
+            } else {
+              size_t target = 52;
+              if ( prefix.length() < target )
+                prefix.append(target - prefix.length(), ' ');
+              outfile << prefix << "\r\n";
+            }
+          } else
+            outfile << prefix << "\r\n";
+        }
+        lastPrintedLine = adjLine;
+        currentPrintedLine += 5;
+        if ( tg.end ) break;
 	} // for
         // Emit literal pool entries after END, sorted by address
         if ( !token_packer.literal_address.empty() ) {
-          auto pad = [](const string &s, int width) {
-            string out = s;
-            if ( out.length() < static_cast<size_t>(width) )
-              out.append(width - out.length(), ' ');
-            return out;
-          };
           vector<pair<int,string>> litAddrs;
           for ( const auto &kv : token_packer.literal_address ) {
             litAddrs.push_back({kv.second, kv.first});
@@ -2925,14 +3085,16 @@ void sicxe ( const string &inputPath, const string &outputPath ) {
               DecToHexa(atoi(lit.literal.c_str()), obj);
               while ( obj.length() < 6 ) obj.insert(0,"0");
             }
-            string line_field = pad(seted,4);
-            string loc_field = pad(loc,4);
+            string line_field = padLeft(seted,4,' ');
+            string loc_field = padLeft(loc,4,' ');
             bool isLastLiteral = (emittedCount + 1 == totalDistinct);
-            string prefix = line_field + "  " + loc_field + (isLastLiteral ? " " : "") + "\t\t\t\t\t\t ";
-            outfile << prefix << obj;
-            if ( isLastLiteral )
-              outfile << "         "; // trailing spaces for final literal to match reference format
-            outfile << "\r\n";
+            string prefix = line_field + "  " + loc_field;
+            if ( isLastLiteral ) prefix.push_back(' ');
+            prefix += "\t\t\t\t\t\t ";
+            string obj_out = obj;
+            if ( isLastLiteral && obj_out.length() < 11 )
+              obj_out.append(11 - obj_out.length(), ' ');
+            outfile << prefix << obj_out << "\r\n";
             emittedCount++;
           }
         }

@@ -1,6 +1,6 @@
 COPY    START 0
 	var1	RESW	1
-	var1	RESB	12
+	var2	RESB	12
 	var3  EQU  12
 add var1
 +addf var2
